@@ -555,6 +555,7 @@ def		FortesFit_ExaminePrior(parameter_names, prior_dictionary, nsamples=1000):
 	"""		
 
 	plt.close('all')
+	plt.ion()
 	
 	NumberParameters = len(parameter_names)
 	
@@ -591,14 +592,85 @@ def		FortesFit_ExaminePrior(parameter_names, prior_dictionary, nsamples=1000):
 		yrange = parax.get_ylim()
 		parax.plot([initval,initval],yrange,'r-',lw=3)	
 
-	plt.show()
 	print('Do these priors look sensible? Please confirm before we move to time-intensive fits.')
 	ch = input('Continue? y/n  : ')
 	if (ch[0] == 'n'):
 		raise(ValueError('Priors are malformed.'))
-		plt.close()
 	else:
-		plt.close()
+		plt.ioff()
+		return ch
+
+# ***********************************************************************************************
+
+def		examine_model_seds(ModelID, nsamples=3, filterids=[], wave_range = [1e-2,1e4]):
+	""" Plot model SEDs and model photometry at some randomly selected points on the parameter grid 
+		
+		ModelID:  The FortesFit ID for the model
+		nsamples: The number of samples of the prior grid points to use. Default=3
+		filterids: List-like, the choice of filterids for the model photometry to plot. 
+					If empty (default), all filters are plotted.
+		wave_range: Wavelength range to plot the SEDs, list-like two-element, ([starting, ending] wavelength in microns)
 	
-	return ch
+	"""		
+
+	fullmodel = FullModel(ModelID)
+	# Use the lowest redshift in the model grid for evaluation. zero index is a dummy
+	redshift  = fullmodel.pivot_redshifts[np.int(len(fullmodel.pivot_redshifts)/2)] 
+	# If no filterids are provided, instantiate the full model to get the full list of filterids
+	if len(filterids) == 0:
+		filterids = fullmodel.filterids
 	
+	# Instantiate the fitmodel used for evaluation
+	model = FitModel(ModelID,redshift,filterids)
+	
+	# Compile the filter wavelengths that were used in the fit
+	Filters = np.array([FortesFit_Filter(filterid) for filterid in filterids])
+	FilterWave = np.array([filter.pivot_wavelength for filter in Filters])	
+	sortindex = np.argsort(FilterWave)  #  sort the filters in wavelength for cleaner plotting
+	Filters    = Filters[sortindex]
+	FilterWave = FilterWave[sortindex]
+	modelFluxes = np.zeros(len(Filters),dtype='f8')
+	
+	
+	# Initialise the SED plot
+	plt.close('all') # Delete all existing plots
+
+	sedfig = plt.figure()
+	ax = sedfig.add_axes([0.12,0.12,0.83,0.8])
+
+	# Outer loop for each random set of parameters
+	for isamp in range(nsamples):
+		param_dict = {model.scale_parameter_name:model.scale_parameter_value}
+		# Loop over shape parameters and select a random draw from each	
+		for param in model.shape_parameter_names:
+			randindex = np.random.randint(len(model.shape_parameters[param]))
+			param_dict.update({param:model.shape_parameters[param][randindex]})
+
+		# Obtain and plot the SED for this set of parameters
+		sed = model.get_pivot_sed(param_dict,redshift)
+		ax.plot(sed['observed_wavelength']/(1.0+redshift),sed['observed_wavelength']*sed['observed_flux'],'k')
+			
+		# Plot the model photometry for this set of parameters
+		for i,filter in enumerate(Filters):
+			modelFluxes[i] = \
+					3.63e-5*10**(model.evaluate(param_dict,redshift,filter.filterid))*filter.pivot_wavelength
+		index, = np.where(np.isfinite(modelFluxes))
+		ax.plot(FilterWave[index]/(1.0+redshift),modelFluxes[index],color='red',lw=0,marker='+')
+		if isamp == 0:
+			yrange = [modelFluxes[index].min(),modelFluxes[index].max()]
+		else:
+			if (modelFluxes[index].min() < yrange[0]):
+				yrange[0] = modelFluxes[index].min()
+			if (modelFluxes[index].max() > yrange[1]):
+				yrange[1] = modelFluxes[index].max()
+		
+	plt.axis([wave_range[0],wave_range[1],yrange[0],yrange[1]])
+
+	plt.loglog()
+	plt.xlabel(r'log Rest Wavelength ($\mu$m)',size='x-large')
+	plt.ylabel(r'log $\nu$F$_{\nu}$ (erg s$^{-1}$)',size='x-large')
+	plt.title(model.description,size='large')
+
+	ax.tick_params(axis='both',labelsize='large')
+
+	return sedfig
