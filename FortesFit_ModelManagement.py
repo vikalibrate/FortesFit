@@ -54,6 +54,11 @@ class FullModel:
 		# Store a list of current filters, take from the list of datasets from the first redshift group
 		self.filterids = np.array([np.int(x) for x in list(Model['z00'])])
 		
+		# import the readmodule from file (Python 3.4 and newer only)
+		readmodulename = 'readmodule_{0:02d}'.format(self.modelid)
+		readmodspec = importlib.util.spec_from_file_location(readmodulename, ModelDir+readmodulename+'.py')
+		self.readmodule = importlib.util.module_from_spec(readmodspec)
+		readmodspec.loader.exec_module(self.readmodule)  #  Load the readmodule
 		
 		Model.close()  # Close the model file, since no evaluations are needed
 						
@@ -99,17 +104,31 @@ class FitModel:
 
 		# Read the redshift pivot values from the model database
 		pivot_redshifts = Model.attrs['Pivot_Redshifts']
+		redshift_tolerance = 0.01 # A tolerance for redshifts to snap to the grid is delta_z/z = 1%
+		self.redshift_tolerance = redshift_tolerance # This is used in the model photometry evaluation
 
-		# Identify the range of pivot redshifts that either bracket or span the input redshift(s)
+		# Identify the range of pivot redshifts that bracket or span the input redshift(s)
 		if(np.isscalar(redshift)):
-			# A single redshift value. Save pivot redshifts that brackets it.
-			if (redshift <= pivot_redshifts[0]) or (redshift >= pivot_redshifts[-1]):
-				raise ValueError('Redshift outside range covered by model')
+			# A single redshift value
+			# Determine if it lies outside the redshifts of the model
+			delta_z0 = pivot_redshifts[0]/redshift - 1
+			delta_zf = 1-pivot_redshifts[-1]/redshift
+			if ((delta_z0 > redshift_tolerance) or (delta_zf > redshift_tolerance)):
+				raise ValueError('Redshift is outside range covered by model')
 
-			index, = np.where(pivot_redshifts >= redshift)
-			zindex = np.array([index[0]-1,index[0]])
+			# Use the absolute normalised difference between provided redshift and the redshift grid
+			# to find a bracketing pair of redshift nodes
+			delta_z = np.abs((pivot_redshifts/redshift) - 1) # absolute normalised difference between redshift and grid
+			sortindex = np.argsort(delta_z) # sort it
+			zindex = np.sort(sortindex[0:2]) # Take the two closest nodes in order as the bracketing pair. Sort them
 		elif(len(redshift) == 2):
-			# Two redshift values. Save pivot redshifts that span them.
+			# Two redshift values. Save pivot redshifts that span them.	
+			delta_z0 = pivot_redshifts[0]/redshift - 1
+			delta_zf = 1-pivot_redshifts[-1]/redshift
+			if ((delta_z0[0] > redshift_tolerance) or (delta_zf[0] > redshift_tolerance)):
+				raise ValueError('Lower redshift outside range covered by model')
+			if ((delta_z0[1] > redshift_tolerance) or (delta_zf[1] > redshift_tolerance)):
+				raise ValueError('Upper redshift outside range covered by model')
 			zindex, = np.where((pivot_redshifts >= redshift[0]) & (pivot_redshifts <= redshift[1]))
 		else:
 			# Incompatible redshift specification
@@ -142,21 +161,14 @@ class FitModel:
 			Given a dictionary of parameter values (continuous, not just at pivots),
 			a redshift and a certain FORTES-FIT filter ID, return the model flux.
 			
-			The modelphotometry cubes bracketing the redshift are identified and the flux
-			corresponding to the parameters for the filter is interpolated. The final returned
-			flux is a linear interpolation between the values at the two pivot redshifts.
+			The redshift grid point closest to the input redshift is used for the evaluation.
 							
 		"""
 		
-		zindex, = np.where(self.redshifts > redshift)
-		if ((len(zindex) == 0) or (len(zindex) == len(self.redshifts))):
-			raise ValueError('Redshift outside model range')
-			return -1.0*np.inf
+		zindex = np.argmin(np.abs(self.redshifts-redshift)) # minimum of absolute difference between input redshift and grid
+			
 		# Read in two cubes that span the input redshift, using HDF5 group/dataset == redshift/filter
-		cube1 = self.model_photometry[FilterID][zindex[0]]
-		cube2 = self.model_photometry[FilterID][zindex[0]-1]
-		# Stack the cubes along a new axis to make a hypercube with redshift as the last dimension
-		hypercube = np.stack((cube1,cube2),axis=-1)
+		hypercube = self.model_photometry[FilterID][zindex]
 
 		# If any element of the hypercube is -inf == no model photometry, skip the interpolation and set flux = -np.inf
 # 		if (np.any(np.isneginf(hypercube))):
@@ -165,14 +177,66 @@ class FitModel:
 		#  Use scipy.RegularGridInterpolator multi-D interpolation, linear mode, 
 		#    to get the model flux for the parameter value in each cube and at the intermediate redshift
 		interpolation_axes = [self.shape_parameters[key] for key in self.shape_parameter_names]
-		interpolation_axes.append(np.array([self.redshifts[zindex[0]-1],self.redshifts[zindex[0]]]))
 		interpolation_function = interpolate.RegularGridInterpolator(tuple(interpolation_axes), hypercube,\
 										method='linear', bounds_error=False, fill_value=-1.0*np.inf)
 		interpolants = [parameters[key] for key in self.shape_parameter_names]
-		interpolants.append(redshift)
 		flux = interpolation_function(np.array(interpolants))
 		return flux + (parameters[self.scale_parameter_name] - self.scale_parameter_value)
-		
+	
+
+# 	def evaluate(self,parameters,redshift,FilterID):
+# 		""" Evaluate the observed model flux
+# 			
+# 			This is the crux of the class.
+# 			Given a dictionary of parameter values (continuous, not just at pivots),
+# 			a redshift and a certain FORTES-FIT filter ID, return the model flux.
+# 			
+# 			The modelphotometry cubes bracketing the redshift are identified and the flux
+# 			corresponding to the parameters for the filter is interpolated. The final returned
+# 			flux is a linear interpolation between the values at the two pivot redshifts.
+# 							
+# 		"""
+# 		
+# 		if (len(self.redshifts) == 2):
+# 			# Single bracketing pair
+# 			# If the provided redshift is not within the bracketed values, return invalid photometry
+# 			if ((redshift < self.redshifts[0]) or (redshift > self.redshifts[1])):
+# 				return -1.0*np.inf
+# 			else:
+# 				zindex = np.array([0,1])
+# 		else:	
+# 			# More than two redshift in model.
+# 			# If the provided redshift is outside the model grid, return invalid photometry
+# 			if ((redshift < self.redshifts[0]) or (redshift > self.redshifts[1])):
+# 				return -1.0*np.inf
+# 			else:
+# 				# Identify either a single redshift node that is equal to the input redshift within the redshift tolerance
+# 				#   or two redshifts nodes that bracket the input redshift
+# 				delta_z = np.abs((self.redshifts/redshift) - 1) # absolute normalised difference between redshift and grid
+# 				sortindex = np.argsort(delta_z) # sort it
+# 				zindex = np.sort(sortindex[0:2]) # Take the two closest nodes in order as the bracketing pair. Sort them
+# 			
+# 		# Read in two cubes that span the input redshift, using HDF5 group/dataset == redshift/filter
+# 		cube1 = self.model_photometry[FilterID][zindex[1]]
+# 		cube2 = self.model_photometry[FilterID][zindex[0]]
+# 		# Stack the cubes along a new axis to make a hypercube with redshift as the last dimension
+# 		hypercube = np.stack((cube1,cube2),axis=-1)
+# 
+# 		# If any element of the hypercube is -inf == no model photometry, skip the interpolation and set flux = -np.inf
+# # 		if (np.any(np.isneginf(hypercube))):
+# # 			flux = -1.0*np.inf
+# # 		else:					
+# 		#  Use scipy.RegularGridInterpolator multi-D interpolation, linear mode, 
+# 		#    to get the model flux for the parameter value in each cube and at the intermediate redshift
+# 		interpolation_axes = [self.shape_parameters[key] for key in self.shape_parameter_names]
+# 		interpolation_axes.append(np.array([self.redshifts[zindex[0]],self.redshifts[zindex[1]]]))
+# 		interpolation_function = interpolate.RegularGridInterpolator(tuple(interpolation_axes), hypercube,\
+# 										method='linear', bounds_error=False, fill_value=-1.0*np.inf)
+# 		interpolants = [parameters[key] for key in self.shape_parameter_names]
+# 		interpolants.append(redshift)
+# 		flux = interpolation_function(np.array(interpolants))
+# 		return flux + (parameters[self.scale_parameter_name] - self.scale_parameter_value)
+# 		
 
 
 	def get_pivot_sed(self,parameters,redshift):
@@ -191,8 +255,9 @@ class FitModel:
 		pivot_paramvals = []
 		# For each parameter, find the pivot value closest to the given value
 		for param in self.shape_parameter_names:
-			diff = 	np.abs(self.shape_parameters[param] - parameters[param])    # Difference between given value and all pivots
-			pivot_paramvals.append(self.shape_parameters[param][diff.argmin()]) # Closest pivot value stored
+			# Index of minimum difference between given value and all pivots
+			index = np.argmin(np.abs(self.shape_parameters[param] - parameters[param])) 
+			pivot_paramvals.append(self.shape_parameters[param][index]) # Closest pivot value stored
 		
 		param_dict = dict(zip(self.shape_parameter_names,pivot_paramvals))
 		param_dict.update({self.scale_parameter_name:parameters[self.scale_parameter_name]})
@@ -418,8 +483,8 @@ def add_filter_to_model(ModelID, FilterIDs):
 		ModelFile     = h5py.File(ModelFileName, 'r+')
 		Model         = FullModel(ModelID)
 		# import the readmodule
-		ReadModuleName    = 'fortesfit.model_readfunctions.readmodule_{0:02d}'.format(ModelID)
-		ReadModule        = importlib.import_module(ReadModuleName)
+#		ReadModuleName    = 'fortesfit.model_readfunctions.readmodule_{0:02d}'.format(ModelID)
+#		ReadModule        = importlib.import_module(ReadModuleName)
 	except IOError:
 		print('Model {0:2d} has not been registered!'.format(ModelID))
 		return[]	
@@ -462,7 +527,7 @@ def add_filter_to_model(ModelID, FilterIDs):
 	#       it is more efficient to evaluate all filters together for each parameter pivot combination.
 	#       Therefore, the temporary storage is a supercube of this shape.
 	tempparlist = ShapeParamPoints.copy()
-	tempparlist.append(len(FilterIDs))
+	tempparlist.append(len(FilterList))
 	modelphot = np.empty(tuple(tempparlist),dtype='f4')
 	# This dictionary is updated at each pivot point and is an argument for the readin function
 	param_subset = dict.fromkeys(ShapeParamNames)
@@ -491,7 +556,7 @@ def add_filter_to_model(ModelID, FilterIDs):
 				param_subset[key] = Model.shape_parameters[key][paramgen[i]]
 			
 			# Call the readin function
-			sed = ReadModule.readin(param_subset,Model.pivot_redshifts[iz])
+			sed = Model.readmodule.readin(param_subset,Model.pivot_redshifts[iz])
 			# Interpolate the model onto the default wavelength scale
 			ObsFlux = np.interp(ObsWave,np.log10(sed['observed_wavelength']),np.log10(sed['observed_flux']),\
 						left=-np.inf,right=-np.inf)
@@ -528,74 +593,6 @@ def add_filter_to_model(ModelID, FilterIDs):
 		print(iz)
 			 
 	ModelFile.close()			
-	return []
-
-
-# ***********************************************************************************************
-
-def visualise_ModelSED(ModelID, FilterIDs, Redshift=1.0, parameters={}):
-	""" Overplot Model SEDs with model photometry 
-	
-		ModelID:  FORTES-FIT local id for an existing model. 
-				  It must be already registered or an exception will be thrown.	
-		FilterIDs: List of FORTES-FIT local ids for an existing filter. 
-				   They must be already registered or an exception will be thrown.
-		RedShift: redshift of the model, default = 1.0	
-		parameters: dictionary of paramter values	
-		
-	"""
-
-	# Initialise plotting environment
-	plt.close('all')
-	
-	# Ensure that the filterlist contains at least 1 filter
-	if(len(FilterIDs) == 0):
-		print('I need at least one FilterID to be supplied to this routine')
-		return []
-	
-	# Read in the list of FORTES filters
-	FilterList  = []
-	FilterWaves = []
-	for filterid in FilterIDs:
-		try:
-			Filter = FortesFit_Filters.FortesFit_Filter(filterid)
-			FilterList.append(Filter)
-			FilterWaves.append(Filter.pivot_wavelength)
-		except IOError:
-			print('visualise_ModelSED: filter access failed.') 
-	modelFluxes = np.zeros(len(FilterList),dtype='f8')
-	
-	Model  = FitModel(ModelID, Redshift, FilterIDs)
-	if(len(parameters) == 0):
-		paramdict = {}
-		# Take a value of the shape parameters in the middle of the range
-		for param in Model.shape_parameter_names:
-			pararray = Model.shape_parameters[param]
-			parval = pararray[int(0.5*len(pararray))]
-			paramdict.update({param:parval})
-		paramdict.update({Model.scale_parameter_name:Model.scale_parameter_value})
-	else:
-		paramdict = parameters	
-	
-	# Initialise the wavelength array that is used for SED plotting (from 100 Ang to 10mm) in microns
-	ObsWave = -2.0 + np.arange(1001)*(6.0/1000.0)
-	ObsFlux = np.zeros(len(ObsWave))
-
-	sedplot = plt.figure()
-	sed = Model.get_pivot_sed(paramdict,Redshift)
-	tempflux = np.interp(ObsWave,np.log10(sed['observed_wavelength']),np.log10(sed['observed_flux']),\
-						left=-np.inf,right=-np.inf)
-	ObsFlux  = 10**(tempflux)
-	plt.plot(10**(ObsWave),ObsFlux*(10**(ObsWave)),'r',lw=2)
-		
-	for i,filter in enumerate(FilterList):
-			modelFluxes[i] = \
-					3.63e-5*10**(Model.evaluate(paramdict,Redshift,filter.filterid))*FilterWaves[i]
-	plt.plot(FilterWaves,modelFluxes,color='k',lw=0,marker='o')
-	
-	plt.loglog()
-	plt.show()
-			
 	return []
 
 
