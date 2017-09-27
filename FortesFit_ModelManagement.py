@@ -46,7 +46,6 @@ class FullModel:
 		self.shape_parameters = {}
 		for param in self.shape_parameter_names:
 			self.shape_parameters.update({param:Model.attrs[param]})
-		self.shape_parameter_mesh = np.meshgrid(*[self.shape_parameters[key] for key in self.shape_parameter_names],indexing='ij')
 
 		# Read the redshift pivot values
 		self.pivot_redshifts = Model.attrs['Pivot_Redshifts']
@@ -62,6 +61,34 @@ class FullModel:
 		
 		Model.close()  # Close the model file, since no evaluations are needed
 						
+
+	def summary(self):
+		""" Print a text summary of the model description, parameters, redshift range, and included filters in wavelength order 
+							
+		"""
+		
+		print('---------------------------')
+		print('Summarising Model {0:2d} :'.format(self.modelid))
+		print('---------------------------')
+		print('Description : '+self.description)
+		print('Valid redshift range : {0:7.4} -- {1:7.4}'.format(self.pivot_redshifts[0],self.pivot_redshifts[-1]))
+		print('Parameters : ')	
+		print(' Scale parameter : '+self.scale_parameter_name+' = '+str(self.scale_parameter_value))
+		print(' Shape parameters : ')	
+		for param in sorted(self.shape_parameters):
+			print('   ',param,self.shape_parameters[param])
+		
+		FilterDescs = []
+		FilterWaves = []
+		for filterid in self.filterids:
+			filter = FortesFit_Filters.FortesFit_Filter(filterid)
+			FilterDescs.append(filter.description)
+			FilterWaves.append(filter.pivot_wavelength)
+		sortindex = np.argsort(FilterWaves)
+		print('Included filters : ')	
+		for ifilter in range(len(sortindex)):
+			print('  {0:>3d}: '.format(ifilter) + FilterDescs[sortindex[ifilter]])
+		
 
 # ***********************************************************************************************
 
@@ -100,7 +127,7 @@ class FitModel:
 		self.shape_parameters = {}
 		for param in self.shape_parameter_names:
 			self.shape_parameters.update({param:Model.attrs[param]})
-		self.shape_parameter_mesh = np.meshgrid(*[self.shape_parameters[key] for key in self.shape_parameter_names],indexing='ij')
+		self.shape_parameter_value_tuple = tuple([self.shape_parameters[key] for key in self.shape_parameter_names])
 
 		# Read the redshift pivot values from the model database
 		pivot_redshifts = Model.attrs['Pivot_Redshifts']
@@ -176,8 +203,7 @@ class FitModel:
 # 		else:					
 		#  Use scipy.RegularGridInterpolator multi-D interpolation, linear mode, 
 		#    to get the model flux for the parameter value in each cube and at the intermediate redshift
-		interpolation_axes = [self.shape_parameters[key] for key in self.shape_parameter_names]
-		interpolation_function = interpolate.RegularGridInterpolator(tuple(interpolation_axes), hypercube,\
+		interpolation_function = interpolate.RegularGridInterpolator(self.shape_parameter_value_tuple, hypercube,\
 										method='linear', bounds_error=False, fill_value=-1.0*np.inf)
 		interpolants = [parameters[key] for key in self.shape_parameter_names]
 		flux = interpolation_function(np.array(interpolants))
@@ -240,15 +266,13 @@ class FitModel:
 
 
 	def get_pivot_sed(self,parameters,redshift):
-		""" Return the model SED at the nearest pivot point in the original parameter space of the model
+		""" Return the model SED at the nearest pivot point in the gridded parameter space of the model
 			
 			Given a redshift and dictionary of parameter values from a smoothly varying range,
 			return the full model SED in observed wavelength and flux units at the nearest pivot point
-			in the parameter space of the model
+			in the gridded parameter space of the model.
 			
 			This routine imports the curated version of the readfunction for the model.
-			Note: the parameter names have to be decoded from binary to unicode when using the readin functions.
-				  Hence the use of the decode() method below.
 			
 		"""
 		
@@ -257,12 +281,16 @@ class FitModel:
 		for param in self.shape_parameter_names:
 			# Index of minimum difference between given value and all pivots
 			index = np.argmin(np.abs(self.shape_parameters[param] - parameters[param])) 
-			pivot_paramvals.append(self.shape_parameters[param][index]) # Closest pivot value stored
-		
+			pivot_paramvals.append(self.shape_parameters[param][index]) # Closest pivot value stored		
 		param_dict = dict(zip(self.shape_parameter_names,pivot_paramvals))
 		param_dict.update({self.scale_parameter_name:parameters[self.scale_parameter_name]})
 		
-		return(self.readmodule.readin(param_dict,redshift))			
+		if 'readtemplates' in dir(self.readmodule):
+			templates = self.readmodule.readtemplates()
+		else:
+			templates = None
+		
+		return(self.readmodule.readin(param_dict,redshift,templates=templates))			
 				
 
 # ***********************************************************************************************
@@ -294,7 +322,8 @@ def register_model(read_module, parameters, scale_parameter_name, \
 	description: a string description of the model for informational purposes, string	
 	redshift_array: An array of redshifts on which to evaluate the model. Default is the FortesFit Settings redshift array
 	filterids: array-like, sequence of FortesFit filter ids to register for the model. 
-			   If zero-length (default), all filters in the database are added.			
+			   	If zero-length (default), all filters in the database are added.
+				If the filter database is large, the default can be prohibitive in terms of processing time.			
 
 	returns the new model ID
 	
@@ -304,7 +333,7 @@ def register_model(read_module, parameters, scale_parameter_name, \
 	"""
 	
 	try:
-		ReadFunction = __import__(read_module)
+		ReadModule = __import__(read_module)
 	except ImportError:
 		print('reader module not available')
 		return []
@@ -366,7 +395,7 @@ def register_model(read_module, parameters, scale_parameter_name, \
 	
 	# Copy the read_module to the model directory and rename it using the model id
 	ModelReadFileName = NewModelDirectory+'readmodule_{0:2d}.py'.format(NewID)
-	shutil.copy(ReadFunction.__file__ , ModelReadFileName)
+	shutil.copy(ReadModule.__file__ , ModelReadFileName)
 	# Create a symbolic link to the readin function from the FortesFit ModelReadFunctions directory for packaging
 	LinkName = FortesFit_Settings.RoutinesDirectory+'model_readfunctions/readmodule_{0:2d}.py'.format(NewID)
 	os.symlink(ModelReadFileName, LinkName)							
@@ -389,6 +418,15 @@ def register_model(read_module, parameters, scale_parameter_name, \
 	# Pivot redshifts
 	ModelFile.attrs.create("Pivot_Redshifts",redshift_array,dtype='f4')
 	
+	# If there is a readtemplates function in the readmodule, call it to get the templates
+	#   to provide to the readin function. This can help speed up the read in process, and is necessary
+	#   for some readmodules.
+	if 'readtemplates' in dir(ReadModule):
+		templates = ReadModule.readtemplates()
+	else:
+		templates = None
+
+
 	# Initialise empty arrays that will store the photometry and temporary dictionaries	
 	
 	# This cube stores the photometry at pivot shape parameters and all filters.
@@ -426,7 +464,7 @@ def register_model(read_module, parameters, scale_parameter_name, \
 				param_subset[key] = parameters[key][paramgen[i]]
 			
 			# Call the readin function
-			sed = ReadFunction.readin(param_subset,redshift_array[iz])
+			sed = ReadModule.readin(param_subset,redshift_array[iz],templates=templates)
 			# Interpolate the model onto the default wavelength scale
 			ObsFlux = np.interp(ObsWave,np.log10(sed['observed_wavelength']),np.log10(sed['observed_flux']),\
 						left=-np.inf,right=-np.inf)
