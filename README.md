@@ -10,7 +10,7 @@ In FortesFit, we distinguish between SEDs and spectrograms (or spectra). The lat
 
 A basis fitting procedure involves:
 
-  - Setting up the observed SED(s) for fitting. This must be done by the user, but an example script is included with best practices.
+  - Setting up the observed SED(s) for fitting. This must be done by the user, but an example script is included with best practices. The units functionality of Astropy is understood my FortesFit.
   
   - Registration of the filters used for the fits, using the routines in FortesFit_Filters. These are stored to disk and can be used for future fitting projects.
   
