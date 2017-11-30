@@ -26,4 +26,4 @@ FortesFit has been used successfully to fit:
   - The infra-red SEDs of nearby AGN from 1-1000 um with stellar, AGN and SF-heated dust components (Rosario+ 2017)
   - The mid-far infrared SEDs of a few local AGN with clumpy torus SED models (5-10 parameters) and SF-heated dust.
   - UV to sub-mm SEDs of high-redshift AGN in the KASHz survey.
-  - <Your project here>
+  - Your project here
