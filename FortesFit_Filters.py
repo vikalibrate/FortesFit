@@ -9,6 +9,8 @@ from fortesfit import FortesFit_Settings
  
 """ A module that handles filter registration and management in FORTES-AGN  """
 
+# ***********************************************************************************************
+
 class FortesFit_Filter:
 	""" Representation of the FORTES-AGN version of the filter throughput for a given filter ID 
 		
@@ -83,6 +85,9 @@ class FortesFit_Filter:
 		return FilterFlux/FilterNorm
 
 
+# ***********************************************************************************************
+
+
 def register_filter(wavelength, throughput, format='photon', reference='User', description='None'):
 	""" Register a filter for use by FORTES-AGN 
 	
@@ -147,11 +152,72 @@ def register_filter(wavelength, throughput, format='photon', reference='User', d
 	return NewID
 
 
+# ***********************************************************************************************
+
+def print_filter_info(filterlist):
+	""" Print a summary of filter information to stdout
+		
+		filterlist: Either a list-like set of filterids, or the name of a Fortes filterset in the main filters directory	
+	"""
+
+	if type(filterlist).__name__ == 'str':
+		# A string, therefore assume this is a Fortes filterset file
+		filtersetfile = FortesFit_Settings.FilterDirectory+filterlist
+		if os.path.isfile(filtersetfile):
+			# The Fortes filterset file exists in the filters directory, read the first column, which are the filter ids.
+			filterids = np.loadtxt(filtersetfile,usecols=(0,),dtype='i4',comments='#')
+		else:
+			print('Fortes filterset file does not exist')
+			return
+	else:
+		# Otherwise a list of filter ids
+		filterids = filterlist	
+	
+	# Get a list of filter instances and information
+	Filters = []
+	FilterNames = []
+	FilterWave = []
+	for id in filterids:
+		tempfilt = FortesFit_Filter(id)
+		Filters.append(tempfilt)
+		FilterNames.append(tempfilt.description)
+		FilterWave.append(tempfilt.pivot_wavelength)
+
+	print('FilterID            Name       Pivot Wavelength (microns)')
+	print('---------------------------------------------------------')
+	for ifilt in range(len(filterids)):
+		print('{0:6d}  {1:25s}   {2:<10.1e}'.format(filterids[ifilt],FilterNames[ifilt],FilterWave[ifilt]))
+	print(' ')	
+	
+	return
+	
+# ***********************************************************************************************
+
+def get_filterset(filtersetfile):
+	""" Obtain a list of filterids given a Fortes filterset name
+		
+		filtersetfile: The name of a Fortes filterset file in the main filters directory
+		
+		If file exists, returns a list of FortesFit filter IDs in the order of the filterset, as a numpy array.
+	"""
+
+	filtersetfile = FortesFit_Settings.FilterDirectory+filtersetfile
+	if os.path.isfile(filtersetfile):
+		# The Fortes filterset file exists in the filters directory, read the first column, which are the filter ids.
+		filterids = np.loadtxt(filtersetfile,usecols=(0,),dtype='i4',comments='#')
+	else:
+		print('Fortes filterset file does not exist')
+		return None
+		
+	return filterids
+
+# ***********************************************************************************************
+
+
 def summarize_filters():
-	""" Create a summary in the local directory of all filters available to FORTES-AGN 
+	""" Create a summary in the local directory of all filters available to FortesFit 
 	
 	The summary is written out as a simple fixed-format multi-column ascii file.
-	Set verbose = True to allow non-	
 	
 	"""
 	
@@ -174,6 +240,6 @@ def summarize_filters():
 	
 	summary_table.sort('pivot wavelength')
 	summary_table.write(FortesFit_Settings.FilterDirectory+'FortesFit_filters_summary.ascii',
-						format='ascii.fixed_width_two_line')
+						format='ascii.fixed_width_two_line',overwrite=True)
 	
 	
