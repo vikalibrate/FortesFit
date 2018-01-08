@@ -6,6 +6,7 @@ from scipy.interpolate import interp1d
 from scipy.integrate import trapz
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 
 from astropy import units as u
 from astropy.table import Table
@@ -71,6 +72,12 @@ class PriorDistribution:
 			# ngrid point sampled prior
 			prior_x = xrange[0] + np.arange(ngrid)*(xrange[1]-xrange[0])/(ngrid-1)
 			prior_y = interprior(prior_x) # interpolate the distribution
+
+			# set all points with very low probability (< 1e-6 of the peak) to 0.0
+			# SciPy RVS based distributions will already be forced to this range
+			index, = np.where(prior_y < 1e-6*prior_y.max())
+			prior_y[index] = 0.0
+
 			if Normalize:
 				norm = trapz(prior_y,prior_x)
 				prior_y = prior_y/norm  #  Normalise the prior distribution to integrate to unity over its range
@@ -111,22 +118,27 @@ class CollectData:
 		FortesFit.
 	"""
 	
-	def __init__(self,filterids,fluxes,fluxerrs,fluxlimits,ID,redshift):
+	def __init__(self,ID,redshift,filterids,fluxes,fluxerrs,Limits=None,Weights=None,MinimumError=None):
 		""" Initialise the FortesFit data representation for a user-provided object
-			
-			filterids: list-like, the FortesFit ids of filters. Any order, but must match that of photometry lists.
-			fluxes: list-like, the fluxes in each band corresponding to filters in argument 'filterids'. 
-					Each element must be an Astropy Quantity instant. Fluxes == NaN are disregarded.
-			fluxerrs: list-like, the 1sigma flux errors in each band corresponding to filters in argument 'filterids'. 
-					  Each element must be an Astropy Quantity instant. Fluxerrs < 0.0 are treated as upper limits,
-					  except if the corresponding flux is undefined
-			fluxlimits: list-like, the associated limit (1sigma, 2 sigma, etc.) for the measurement in the band.
 			
 			ID: An ID string for this object. This will be used to generate the output file.
 			redshift: An array of shape (2,N) or (1,). 
 					  If single-element, this is the fixed redshift of the object.							
 					  If 2xN, the first row is a grid of redshift, the second the probability of the redshift.
 					  This is used to represent p(z) from photometric redshift distributions.
+			filterids: list-like, the FortesFit ids of filters. Any order, but must match that of photometry lists.
+			fluxes: list-like, the fluxes in each band corresponding to filters in argument 'filterids'. 
+					Each element must be an Astropy Quantity instant. Fluxes == NaN are disregarded.
+			fluxerrs: list-like, the 1sigma flux errors in each band corresponding to filters in argument 'filterids'. 
+					  Each element must be an Astropy Quantity instant. Fluxerrs < 0.0 are treated as upper limits,
+					  except if the corresponding flux is undefined
+			Limits: list-like, the associated limit (1 sigma, 2 sigma, etc.) for the measurement in the band.
+					 If None, all limits are assumed to be 1sigma.
+			Weights: list-like, a weight to apply to the photometry, equivalent to an inverse scaling of the error.
+					 Note, this is different from a normal standard weighted least-squares, where the weight is
+					 proportional to the inverse variance. If None, all weights are assumed to be 1.0			
+			MinimumError: A minimum percentage error. 
+						  If set, flux errors are set to a minimum value of Error = (MinimumError/100)*Flux.
 										
 		"""
 	
@@ -153,12 +165,25 @@ class CollectData:
 		Filters = np.array(Filters)
 		FilterWaves = np.array(FilterWaves)		
 		
+		# Process weights and limits
+		if Weights is None:
+			# No weights specified, so set equal weights for all bands
+			err_scaling  = np.full(len(fluxes),1.0)
+		else:
+			err_scaling  = 1.0/Weights
+
+		if not(Limits is None):
+			# If limits are specified, scale the weights by the limits for non-detections
+			index, = np.where(fluxerrs < 0.0)
+			if len(index) > 0:
+				err_scaling[index] *= Limits[index]
+
 		# Flag and remove bands with no photometry
 		index, = np.where(np.isfinite(fluxes)) # Disregard invalid fluxes
 		n_validphot = len(index)
 		fluxes      = fluxes[index]
 		fluxerrs    = fluxerrs[index]
-		fluxlimits  = fluxlimits[index]
+		err_scaling = err_scaling[index]
 		Filters     = Filters[index]
 		FilterWaves = FilterWaves[index]
 
@@ -172,20 +197,75 @@ class CollectData:
 			eflux = fluxerrs[ifilt].to(u.erg/u.s/u.cm**2/u.micron,equivalencies=u.spectral_density(FilterWaves[ifilt]*u.micron))
 			if(flux > 0.0) and (eflux > 0.0):
 				# Detection
+				# Set the minimum error if desired
+				if not(MinimumError is None):
+					if (eflux.value/flux.value) < MinimumError/100.0:
+						eflux = (MinimumError/100.0)*flux
 				fitflux[ifilt]     = flux.value
 				fitflux_err[ifilt] = eflux.value
 			if(flux > 0.0) and (eflux < 0.0):
 				# Upper Limit
 				fitflux[ifilt]     = flux.value
-				fitflux_err[ifilt] = -1.0*fluxlimits[ifilt] # Use the correct limit for this filter
-
+				fitflux_err[ifilt] = -1.0   # These will be scaled by the flux limit when calculating the likelihood
+		
+		
 		# Filters will be stored after sorting by pivot wavelength.
 		sortindex = np.argsort(FilterWaves)
 		self.filters = Filters[sortindex]
 		self.pivot_wavelengths = FilterWaves[sortindex]
 		self.fluxes = fitflux[sortindex]
 		self.flux_errors = fitflux_err[sortindex]
+		self.error_weights = err_scaling[sortindex]
+	
 
+	# ******************************************
+	
+	def	plot_sed(self, **kwargs):
+		
+		""" Plot the SED of the photometry of the object
+		"""
+		
+		figure = plt.figure()
+		figure.show
+		ax1 = plt.axes()
+		ax1.set_xlim([0.1,1000])
+		ax1.semilogx()
+
+		wavelengths = self.pivot_wavelengths
+		redshift = self.redshift.characteristic	
+		fluxes = self.fluxes
+		efluxes = self.flux_errors
+		weights = self.error_weights
+
+		# "Detections" as defined in the photometric compilation
+		index, = np.where(efluxes > 0.0)
+		plotflux = np.log10(fluxes[index]*wavelengths[index])
+		eplotflux_hi = np.log10((fluxes[index]+efluxes[index])*wavelengths[index]) - plotflux
+		eplotflux_lo = plotflux - np.log10((fluxes[index]-efluxes[index])*wavelengths[index])
+		ax1.errorbar(wavelengths[index],plotflux,yerr=[eplotflux_lo,eplotflux_hi],color='black',ecolor='black',fmt='ko')
+		axrange = ax1.axis()
+
+		index1, = np.where(weights[index] != 1.0)
+		if len(index1) > 0:
+			ax1.plot(wavelengths[index[index1]],plotflux[index1],'ro')
+
+		# "Limits" are defined in the photometric compilation
+		# equivalent 1sigma limits will be plotted
+		index, = np.where(efluxes < 0.0)
+		for i in range(len(index)):
+			lim = np.log10((fluxes[index[i]]/np.abs(weights[index[i]]))*wavelengths[index[i]])
+			ax1.plot(wavelengths[index[i]],lim,'k+')
+			ax1.arrow(wavelengths[index[i]],lim,0.0,-0.1,
+					  fc='black',ec='black',head_width=0.15*wavelengths[index[i]],head_length=0.05)
+		
+		ax1.set_title(self.id+'    z = {0:5.3f}'.format(redshift),ha='center')
+		ax1.set_xlabel(r'Observed Wavelength ($\mu$m)')
+		ax1.set_ylabel(r'log $\nu$F$_{\nu}$ (erg s$^{-1}$ cm$^{-2}$)')
+		
+		figure.show
+		
+		return figure
+		
 # ***********************************************************************************************
 
 class CollectModel:
@@ -249,8 +329,8 @@ class CollectModel:
 			if np.size(prior) == 1:
 				if type(prior).__name__ == 'rv_frozen':
 					# A frozen Scipy rvs_continuous instance. Will raise its own exception if it isn't properly set.
-					# Consider a range where the CDF goes from 1e-10 to 1 - 1e-10
-					xrange = [prior.ppf(1e-10),prior.ppf(1.0-1e-10)]
+					# Consider a range where the CDF goes from 1e-6 to 1 - 1e-6
+					xrange = [prior.ppf(1e-6),prior.ppf(1.0-1e-6)]
 					prior_x = xrange[0] + np.arange(101)*(xrange[1]-xrange[0])/100.0
 					prior_y = prior.pdf(prior_x) # get the distribution using the PDF function
 					priordict.update({parameter_name:PriorDistribution(np.stack((prior_x,prior_y),axis=0),Normalize=False)})
@@ -275,8 +355,8 @@ class CollectModel:
 					if np.size(prior) == 1:
 						if type(prior).__name__ == 'rv_frozen':
 							# A frozen Scipy rvs_continuous instance. Will raise its own exception if it isn't properly set.
-							# Consider a range where the CDF goes from 1e-10 to 1 - 1e-10
-							xrange = [prior.ppf(1e-10),prior.ppf(1.0-1e-10)]
+							# Consider a range where the CDF goes from 1e-6 to 1 - 1e-6
+							xrange = [prior.ppf(1e-6),prior.ppf(1.0-1e-6)]
 							prior_x = xrange[0] + np.arange(101)*(xrange[1]-xrange[0])/100.0
 							prior_y = prior.pdf(prior_x) # get the distribution using the PDF function
 							priordict.update({parameter_name:PriorDistribution(np.stack((prior_x,prior_y),axis=0),Normalize=False)})
@@ -429,41 +509,53 @@ def examine_priors(modelcollection):
 
 	for imodel in range(nmodels):
 
-		fig = plt.figure(figsize=(8,8)) # A large plotting window, for 3x3 = 9 parameters per plot
+		plt.close()
 
+		modelname = modelcollection.models[imodel].description
 		n_parameters = modelcollection.number_of_parameters[imodel]
 		param_names  = list(modelcollection.priors[imodel].keys())
+		npages = int(n_parameters / 9) + 1
 		# Loop through each parameter
 		for iparam in range(n_parameters):
 		
-			if (iparam % 9 == 0) & (iparam != 0):
-				plt.show()
-				ch = input('Continue with more parameters? y or n : ')
-				if ch == 'n': return
-				plt.close()
+			if (iparam % 9 == 0):
+				# Reset the plotting window
+				xstart = 0
+				ystart = 0
+				fig = plt.figure(figsize=(8,8)) # A large plotting window, for 3x3 = 9 parameters per plot
+				fig.text(0.5,0.95,modelname,ha='center')
+				if iparam != 0:
+					ch = input('Continue with more parameters? y or n : ')
+					if ch == 'n': return
+					plt.close()
 
-			plt.subplot(3,3,(iparam % 9)+1)
+			xstart = iparam % 3
+			ystart = int(iparam / 3)
+			ax = fig.add_axes([0.1+xstart*0.8/3+0.01,0.9-(ystart+1)*0.8/3+0.05,0.8/3-0.01,0.6/3])			
 
 			prior = modelcollection.priors[imodel][param_names[iparam]]
 			if prior.fixed:
 				# Single element prior >> fixed parameter
-				plt.axis([0,1,0,1])
-				plt.text(0.5,0.6,param_names[iparam],size='small',ha='center')
+				ax.axis([0,1,0,1])
 				plt.text(0.5,0.4,'Fixed at '+str(prior.characteristic),size='small',ha='center')
-				plt.xticks([])
-				plt.yticks([])
+				ax.tick_params(axis='both',bottom=False,labelbottom=False,left=False,labelleft=False)		
+				ax.set_title(param_names[iparam])
 			else:
 				# Regular prior
-				plt.plot(prior.prior_grid[0,:],prior.prior_grid[1,:],'k')
-				plt.plot([prior.characteristic,prior.characteristic],[0,np.max(prior.prior_grid[1,:])],'r')
-				plt.yticks([])
-				plt.xlabel(param_names[iparam])
+				ax.plot(prior.prior_grid[0,:],prior.prior_grid[1,:],'k')
+				ax.plot([prior.characteristic,prior.characteristic],[0,np.max(prior.prior_grid[1,:])],'r')
+
+				plotrange = ax.axis()
+				delrange = 10**(round(np.log10((plotrange[1]-plotrange[0])/5.0)))
+				ax.xaxis.set_major_locator(ticker.MultipleLocator(delrange))
+
+				ax.tick_params(axis='y',left=False,labelleft=False)		
+				ax.set_title(param_names[iparam])
+
 	
 		plt.show()
-		if imodel < nmodels-1:
-			ch = input('Continue with more models? y or n : ')
-			if ch == 'n': return
-			plt.close()
+		ch = input('Continue with more models? y or n : ')
+		if ch == 'n': return
 
 	return
 
