@@ -232,10 +232,10 @@ class FitModel:
 		self.filterids = FilterIDs
 		
 		# import the readmodule from file (Python 3.4 and newer only)
-		readmodulename = 'readmodule_{0:02d}'.format(self.modelid)
-		readmodspec = importlib.util.spec_from_file_location(readmodulename, ModelDir+readmodulename+'.py')
-		self.readmodule = importlib.util.module_from_spec(readmodspec)
-		readmodspec.loader.exec_module(self.readmodule)  #  Load the readmodule
+# 		readmodulename = 'readmodule_{0:02d}'.format(self.modelid)
+# 		readmodspec = importlib.util.spec_from_file_location(readmodulename, ModelDir+readmodulename+'.py')
+# 		self.readmodule = importlib.util.module_from_spec(readmodspec)
+# 		readmodspec.loader.exec_module(self.readmodule)  #  Load the readmodule
 
 		# Create a dictionary lookup table that links the name of the parameter to a combination
 		# of model ID and running index, which identifies the parameter uniquely.
@@ -280,6 +280,37 @@ class FitModel:
 		else:
 			return -1.0*np.inf 
 	
+
+	def evaluate_dependency(self,parameters,DependencyName):
+		""" Evaluate the observed model flux
+			
+			Given a dictionary of parameter values (continuous, not just at pivots),
+			and the name of a dependency, return the value of the dependency.
+			
+			The redshift grid point closest to the input redshift is used for the evaluation.
+			** Not complete **
+							
+		"""
+		
+		zindex = np.argmin(np.abs(self.redshifts-redshift)) # minimum of absolute difference between input redshift and grid
+			
+		# Read in two cubes that span the input redshift, using HDF5 group/dataset == redshift/filter
+		hypercube = self.model_photometry[FilterID][zindex]
+
+		# If any element of the hypercube is -inf == no model photometry, skip the interpolation and set flux = -np.inf
+# 		if (np.any(np.isneginf(hypercube))):
+# 			flux = -1.0*np.inf
+# 		else:					
+		#  Use scipy.RegularGridInterpolator multi-D interpolation, linear mode, 
+		#    to get the model flux for the parameter value in each cube and at the intermediate redshift
+		interpolation_function = interpolate.RegularGridInterpolator(self.shape_parameter_value_tuple, hypercube,\
+										method='linear', bounds_error=False, fill_value=-1.0*np.inf)
+		interpolants = [parameters[key] for key in self.shape_parameter_names]
+		flux = interpolation_function(np.array(interpolants)) + (parameters[self.scale_parameter_name] - self.scale_parameter_value)
+		if np.isfinite(flux):
+			return flux
+		else:
+			return -1.0*np.inf 
 
 # 	def evaluate(self,parameters,redshift,FilterID):
 # 		""" Evaluate the observed model flux
@@ -355,7 +386,7 @@ def register_model(read_module, parameters, scale_parameter_name, \
 			accepts a value for each parameter in the form of a dictionary, a redshift, 
 			and an optional templates keyword.
 			It must return an SED consisting of a dictionary of matched arrays with keys
-			'wavelength' (microns) and 'observed flux' (erg/s/cm^2/micron).
+			'observed wavelength' (microns) and 'observed flux' (erg/s/cm^2/micron).
 			The module can contain an optional function 'readtemplates' which can be called
 			first to read a set of templates to save disk operations. The
 			user must ensure that the templates are intelligible to the readin function.  
@@ -573,7 +604,7 @@ def add_filter_to_model(ModelID, FilterIDs):
 	#raise ValueError
 	try:
 		ModelFile     = h5py.File(ModelFileName, 'r+')
-		Model         = FullModel(ModelID)
+		Model         = FullModel(ModelID,sed_readin=True)
 		# import the readmodule
 #		ReadModuleName    = 'fortesfit.model_readfunctions.readmodule_{0:02d}'.format(ModelID)
 #		ReadModule        = importlib.import_module(ReadModuleName)
@@ -648,7 +679,7 @@ def add_filter_to_model(ModelID, FilterIDs):
 				param_subset[key] = Model.shape_parameters[key][paramgen[i]]
 			
 			# Call the readin function
-			sed = Model.readmodule.readin(param_subset,Model.pivot_redshifts[iz])
+			sed = Model.get_pivot_sed(param_subset,Model.pivot_redshifts[iz])
 			# Interpolate the model onto the default wavelength scale
 			ObsFlux = np.interp(ObsWave,np.log10(sed['observed_wavelength']),np.log10(sed['observed_flux']),\
 						left=-np.inf,right=-np.inf)
@@ -682,7 +713,8 @@ def add_filter_to_model(ModelID, FilterIDs):
 			zpiv.create_dataset(DatasetName,data=SubCubes[ifilter])
 		
 		ModelFile.flush() # Flush the HDF5 file to disk
-		print(iz)
+		# Write out a counter to tell the user how many redshift points have been processed
+		print("{0:<3d} redshift points processed".format(iz+1),end="\r")
 			 
 	ModelFile.close()			
 	return None
@@ -700,8 +732,11 @@ def add_model_dependency(ModelID, dependency_function, dependency_name=''):
 		
 		This function takes an existing model specified by its ID and updates its HDF5 file
 		with a grid corresponding to the dependency. The grid contains the value of the dependency
-		at all pivot points of the model shape parameters, and at the reference value of the
-		model scale parameter.
+		at all pivot points of the model shape parameters. 
+		If the dependency is related to the scale parameter, its grid has N+1 dimensions, 
+		where N is the number of shape parameters and the dependency is evaluated at the default 
+		value of the scale parameter. If it has only N dimensions, it does not depend on the scale
+		parameter.
 
 		ModelID:  FORTES-FIT local id for an existing model. 
 				  It must be already registered or an exception will be thrown.	
@@ -716,18 +751,11 @@ def add_model_dependency(ModelID, dependency_function, dependency_name=''):
 		dependency_name = dependency_function.__name__
 
 	try:
-		Model         = FullModel(ModelID,get_templates=True)
+		Model         = FullModel(ModelID,sed_readin=True)
 	except IOError:
 		print('Model {0:2d} has not been registered!'.format(ModelID))
 		return None	
 	
-	if dependency_name in ModelFile['Dependencies']:
-		# A dependency of this name is already in the model. 
-		# Remove it and replace with new version of the dependency
-		
-		print('The dependency '+dependency_name+' already exists. It will be updated.')
-		del ModelFile['Dependencies'][dependency_name]
-
 	# Add the dependency to the model
 	# Determine the number of model parameters and the number of pivot points per parameter
 	ShapeParamNames  = Model.shape_parameter_names
@@ -755,6 +783,7 @@ def add_model_dependency(ModelID, dependency_function, dependency_name=''):
 		print('Dependency function failed. Please fix it.')
 		return None
 
+	TestCall = False
 	for iparam in range(np.prod(ShapeParamPoints)):
 		# Loop over all shape parameters
 		# unravel indices to access the pivot points of each parameter
@@ -765,12 +794,38 @@ def add_model_dependency(ModelID, dependency_function, dependency_name=''):
 			
 		# Call the dependency function
 		dependency[paramgen] = dependency_function(param_subset,Model)
+		
+		# Find the first instance where the dependency value is a valid, finite number 
+		# (to catch border cases where the dependency may be undefined, etc.)
+		if not TestCall:
+			if np.isfinite(dependency[paramgen]):
+				test_paramgen = paramgen
+				TestCall = True
 
+	# Test to see if the dependency is related to the scale parameter
+	# fill the temporary parameter dictionary for the call to the dependency function
+	for i,key in enumerate(ShapeParamNames):
+		param_subset[key] = Model.shape_parameters[key][test_paramgen[i]]
+	# Change the value of the scale parameter by an arbitrary amount
+	param_subset[Model.scale_parameter_name] = Model.scale_parameter_value + 1.0
+	# Call the dependency function with changed scale parameter
+	test_dependency = dependency_function(param_subset,Model)
+	# Check for similarity of dependency from this and original stored value, within a tolerance of 0.001 percent
+	if np.abs(1.0-(dependency[test_paramgen]/test_dependency)) >= 1e-5:
+		dependency = np.expand_dims(dependency,axis=-1)		
+		
 	# Access the HDF5 file for the model
 	ModelDirectory    = FortesFit_Settings.ModelPhotometryDirectory+'Model{0:2d}/'.format(ModelID)
 	ModelFileName     = ModelDirectory+'{0:2d}.fortesmodel.hdf5'.format(ModelID)
 	try:
 		ModelFile     = h5py.File(ModelFileName, 'r+')
+		if dependency_name in ModelFile['Dependencies']:
+			# A dependency of this name is already in the model. 
+			# Remove it and replace with new version of the dependency
+			
+			print('The dependency '+dependency_name+' already exists. It will be updated.')
+			del ModelFile['Dependencies'][dependency_name]
+
 		DatasetName = 'Dependencies/'+dependency_name	
 		ModelFile.create_dataset(DatasetName,data=dependency)
 		ModelFile.close()			
@@ -899,6 +954,16 @@ def test_model_registration(read_module, parameters, scale_parameter_name, \
 		
 	"""
 	
+	# Check the order of the parameters. These must be supplied strictly is ascending order to ensure that the
+	# interpolation routines used behave correctly
+	for param in parameters:
+		# Only shape parameters are multiply valued
+		if param != scale_parameter_name:
+			for ival in range(len(parameters[param])-1):
+				if (parameters[param][ival] > parameters[param][ival+1]):
+					print(param+' is not supplied in ascending order')
+					return []				
+
 	try:
 		ReadModule = __import__(read_module)
 	except ImportError:
