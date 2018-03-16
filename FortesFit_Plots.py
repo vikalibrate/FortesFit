@@ -231,7 +231,7 @@ def	PlotModelSEDs(FortesFit_OutFile, wave_range = [1e-1,1e3], BurnIn=10000, PDF_
 	ModelIDs = fitresult.fit_modelids
 	Models = []
 	for modelid in ModelIDs:
-		Models.append(FullModel(modelid,get_templates=True))
+		Models.append(FullModel(modelid,sed_readin=True))
 	Nmodels = len(ModelIDs)
 
 	# Create a list of model parameter dictionaries with best-fit/fixed parameter values. These will be changed
@@ -274,6 +274,9 @@ def	PlotModelSEDs(FortesFit_OutFile, wave_range = [1e-1,1e3], BurnIn=10000, PDF_
 				if uparam in paramdict_varying:
 					paramdict_plot[imodel][param] = paramdict_varying[uparam]
 			sed = model.get_pivot_sed(paramdict_plot[imodel],Redshift)
+			# Special treatment of the Slone12 model, where the model photometry has been boosted by 1 dex.
+# 			if modelid == 17:
+# 				sed['observed_flux'] *= 0.1
 			index, = np.where(sed['observed_flux'] > 0.0) # Only interpolate over valid parts of the model SED
 			tempflux = np.interp(ObsWave,np.log10(sed['observed_wavelength'][index]),np.log10(sed['observed_flux'][index]),\
 								 left=-np.inf,right=-np.inf) + ObsWave	
@@ -528,7 +531,7 @@ def		examine_model_seds(ModelID, nsamples=3, filterids=[], wave_range = [1e-2,1e
 	
 	"""		
 
-	fullmodel = FullModel(ModelID)
+	fullmodel = FullModel(ModelID,sed_readin=True)
 	# Use the average redshift in the model grid for evaluation. zero index is a dummy
 	redshift  = fullmodel.pivot_redshifts[np.int(len(fullmodel.pivot_redshifts)/2)] 
 	# If no filterids are provided, instantiate the full model to get the full list of filterids
