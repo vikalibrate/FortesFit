@@ -17,7 +17,7 @@ from fortesfit import FortesFit_Fitting
 
 # ***********************************************************************************************
 
-def	FortesFit_emcee(varying_indices, datacollection, modelcollection, nwalkers=100, nsteps=500, tight=False, \
+def	FortesFit_emcee(varying_indices, datacollection, modelcollection, nwalkers=100, nsteps=1000, tight=False, \
 					write_walker_chains=False):
 	""" The upper level function call to fit one object with EMCEE		
 		

@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 
 import numpy as np
 from scipy.special import erf
@@ -18,15 +19,17 @@ from fortesfit import FortesFit_ModelManagement
 
 # ***********************************************************************************************
 
-def	FortesFit_FitSingle(datacollection, modelcollection, method='emcee', **kwargs):
+def	FortesFit_FitSingle(datacollection, modelcollection, fitfile, **kwargs):
 	""" The upper level function call to fit one object with FortesFit		
 		
-		datacollection: An FortesFit CollectData instance. See FortesFit_Preparation for details.
-		modelcollection: An FortesFit CollectModel instance. See FortesFit_Preparation for details.
-		method: a keyword which identifies which fitting engine to use.
+		Positional Arguments:
+		 datacollection: An FortesFit CollectData instance. See FortesFit_Preparation for details.
+		 modelcollection: An FortesFit CollectModel instance. See FortesFit_Preparation for details.
+		 fifile: the file reference of an open HDF5 file used for the fit.
+
 		kwargs: keyword arguments passed to the fitting engine
 		
-		returns the output class of the fitting engine
+		returns True if the successful
 
 	"""
 	
@@ -38,18 +41,25 @@ def	FortesFit_FitSingle(datacollection, modelcollection, method='emcee', **kwarg
 			# If the varyflag is set for this parameter, store the index
 			varying_indices.append(iparam)
 
-	if method == 'emcee':
+	# Get the fitting engine information directly from the fit file
+	fitengine = fitfile.attrs['Fitting Engine'].decode()
+	start = time.time()
+	if fitengine == 'emcee':
 		from fortesfit.FortesFit_emcee import FortesFit_emcee
 		fitresult = FortesFit_emcee(varying_indices, datacollection, modelcollection, **kwargs)
 		chain = fitresult.chain
-		allsamples = chain.reshape((chain.shape[0]*chain.shape[1],chain.shape[2]),order='F')
-		return allsamples			
-	elif method == 'multinest':
+		flatchain = chain.reshape((chain.shape[0]*chain.shape[1],chain.shape[2]),order='F')
+	elif fitengine == 'multinest':
 		from fortesfit.FortesFit_multinest import FortesFit_multinest
-		allsamples = FortesFit_multinest(varying_indices, datacollection, modelcollection, **kwargs)			
-		return allsamples			
+		allsamples = FortesFit_multinest(varying_indices, datacollection, modelcollection, **kwargs)
+		flatchain = allsamples.get_equal_weighted_posterior()[:,0:-1]			
 	else:
-		raise ValueError('Method not recognised')
+		raise ValueError('Fitting Method not recognised')
+		return False
+	fitfile['Chain'].create_dataset('posterior_chain',data=flatchain)
+	end = time.time()
+	print('Monte-Carlo phase eval time: {0:<10.5f} min'.format((end-start)/60.0))
+	return True
 
 
 # ***********************************************************************************************
@@ -142,11 +152,14 @@ def	Sawicki12_loglikelihood(redshift,filters,fluxes,flux_errors,error_weights,mo
 	index, = np.where(flux_errors < 0.0) # Upper limits, supplied errors are negative
 	sigma = fluxes[index]/error_weights[index]
 	# An error function for each limited band describes the likelihood
-	loglike_lim += np.sum(np.log(np.sqrt(np.pi/2.0)*sigma*(1.0 + erf((fluxes[index] - modelFluxes[index])/(np.sqrt(2.0)*sigma)))))
+	# loglike_lim += np.sum(np.log(np.sqrt(np.pi/2.0)*sigma*(1.0 + erf((fluxes[index] - modelFluxes[index])/(np.sqrt(2.0)*sigma)))))
+#	loglike_lim += np.sum(np.log(1.253314*sigma*(1.0 + erf((fluxes[index] - modelFluxes[index])/(1.4142136*sigma)))))
+	loglike_lim += np.sum(np.log(0.5*(1.0 + erf((fluxes[index] - modelFluxes[index])/(1.4142136*sigma)))))
 
 	# If there are any cases of FluxErrors = 0.0, they are not used to calculate likelihoods, 
 	#     i.e, those fluxes are masked from fitting
 	
+	#print(loglike_lim,fluxes,modelFluxes,sigma)
 	# Return the sum of the loglikelihoods
 	return loglike_det + loglike_lim
 

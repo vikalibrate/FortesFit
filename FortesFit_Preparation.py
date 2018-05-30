@@ -1,5 +1,6 @@
 import sys
 import os
+import glob
 
 import numpy as np
 from scipy.interpolate import interp1d
@@ -56,27 +57,31 @@ class PriorDistribution:
 
 			# Sort the prior grid low to high in the parameter
 			sortindex = np.argsort(prior_grid[0,:])
+			prior_orig_x = prior_grid[0,sortindex]
+			prior_orig_y = prior_grid[1,sortindex]
+
+			# set all points with very low probability (< 1e-6 of the peak) to 0.0
+			# SciPy RVS based distributions will already be forced to this range
+			index, = np.where(prior_orig_y < 1e-6*prior_orig_y.max())
+			prior_orig_y[index] = 0.0
 
 			if parameter_range is None:
 				# Default, no parameter range provided
-				xrange = [prior_grid[0,sortindex[0]],prior_grid[0,sortindex[-1]]]
+				index, = np.where(prior_orig_y > 0.0)
+				xrange = [prior_orig_x[index].min(),prior_orig_x[index].max()]
 			else:
 				if parameter_range[0] >= parameter_range[1]:
 					raise ValueError('User-defined parameter range must be [low, high], low < high')
 				xrange = parameter_range
 
 			# Set up a cubic spline interpolator
-			interprior = interp1d(prior_grid[0,sortindex],prior_grid[1,sortindex],\
+			interprior = interp1d(prior_orig_x,prior_orig_y,\
 								  kind='cubic',bounds_error=False,fill_value=0.0,assume_sorted=True)
 
 			# ngrid point sampled prior
 			prior_x = xrange[0] + np.arange(ngrid)*(xrange[1]-xrange[0])/(ngrid-1)
 			prior_y = interprior(prior_x) # interpolate the distribution
 
-			# set all points with very low probability (< 1e-6 of the peak) to 0.0
-			# SciPy RVS based distributions will already be forced to this range
-			index, = np.where(prior_y < 1e-6*prior_y.max())
-			prior_y[index] = 0.0
 
 			if Normalize:
 				norm = trapz(prior_y,prior_x)
@@ -86,6 +91,67 @@ class PriorDistribution:
 			self.characteristic = np.sum(prior_x*prior_y)/np.sum(prior_y)
 			self.prior_grid     = np.stack((prior_x,prior_y),axis=0)
 		
+
+	def	update_prior(self,new_prior_grid):
+		""" Update the prior PDF by multiplying it with a new supplied prior PDF
+
+			new_prior_grid: A 2xN array, the first row is a grid in the parameter, 
+						    the second row is the probability density function on the grid.
+						    The array does not need to be sorted, and the pdf does not have to be normalised.
+		"""
+			
+		# Check to see if this is a 2xN array
+		if new_prior_grid.shape[0] != 2 :
+			# this is the wrong shape
+			raise TypeError('Input array has the wrong shape')
+
+		if not self.fixed:
+		# Only update priors if the prior is not fixed
+
+			# Sort the prior grid low to high in the parameter
+			sortindex = np.argsort(new_prior_grid[0,:])
+			prior_orig_x = new_prior_grid[0,sortindex]
+			prior_orig_y = new_prior_grid[1,sortindex]
+		 
+			# set all points with very low probability (< 1e-6 of the peak) to 0.0
+			# SciPy RVS based distributions will already be forced to this range
+			index, = np.where(prior_orig_y < 1e-6*prior_orig_y.max())
+			prior_orig_y[index] = 0.0
+
+			# Set up a cubic spline interpolator
+			interprior = interp1d(prior_orig_x,prior_orig_y,\
+								  kind='cubic',bounds_error=False,fill_value=0.0,assume_sorted=True)
+
+			# ngrid point sampled prior
+			# Interpolate the new prior grid onto the original prior parameter grid
+			prior_x = self.prior_grid[0,:]
+			prior_y = interprior(prior_x)
+
+			norm = trapz(prior_y,prior_x)
+			prior_y = prior_y/norm  #  Normalise the prior distribution to integrate to unity over its range
+
+			# Multiply the new prior with the original prior
+			self.prior_grid[1,:] *= prior_y
+
+			# Reanalyse the parameter range of the prior to exclude bounding regions with very low probability
+			prior_x = self.prior_grid[0,:]
+			prior_y = self.prior_grid[1,:]
+			index, = np.where(prior_y > 0.0)
+			xrange = [prior_x[index].min(),prior_x[index].max()]
+
+			ngrid = self.prior_grid.shape[1]	
+
+			# Set up a cubic spline interpolator
+			interprior = interp1d(prior_x,prior_y,\
+								  kind='cubic',bounds_error=False,fill_value=0.0,assume_sorted=True)
+
+			# ngrid point sampled prior
+			prior_x = xrange[0] + np.arange(ngrid)*(xrange[1]-xrange[0])/(ngrid-1)
+			prior_y = interprior(prior_x) # interpolate the distribution
+
+			self.characteristic = np.sum(prior_x*prior_y)/np.sum(prior_y)
+			self.prior_grid     = np.stack((prior_x,prior_y),axis=0)
+
 
 	def	draw_prior(self,ndraws=1):
 		""" Draw a given number of random values from the prior distribution.
@@ -164,7 +230,7 @@ class CollectData:
 
 		Filters = np.array(Filters)
 		FilterWaves = np.array(FilterWaves)		
-		
+
 		# Process weights and limits
 		if Weights is None:
 			# No weights specified, so set equal weights for all bands
@@ -351,7 +417,7 @@ class CollectModel:
 
 				if parameter_name in priordist.keys():
 					# A prior has been provided by the user
-					prior = priordists[imodel][parameter_name]				
+					prior = priordist[parameter_name]				
 					if np.size(prior) == 1:
 						if type(prior).__name__ == 'rv_frozen':
 							# A frozen Scipy rvs_continuous instance. Will raise its own exception if it isn't properly set.
@@ -385,6 +451,85 @@ class CollectModel:
 					priordict.update({parameter_name:PriorDistribution(np.stack((prior_x,prior_y),axis=0))})
 				
 
+			# Finally Process any dependency priors
+			#  First initialise a grid storing the multi-dimensional likelihood from the dependencies
+			#  It will have an array shape with the same dimensionality as the shape parameters
+			dependency_pdf = np.full([len(model.shape_parameters[param]) for param in model.shape_parameter_names],1.0) # not normalised	
+			DependencyFlag = False # A flag to identify if any dependencies are being processed
+
+			for dependency_name in model.dependency_names:
+				if dependency_name in priordist.keys():
+					DependencyFlag = True # Set the dependency flag so that dependency-based priors are processed below
+					# A prior has been provided by the user for this dependency
+					prior = priordist[dependency_name]				
+					if np.size(prior) == 1:
+						if type(prior).__name__ == 'rv_frozen':
+							# A frozen Scipy rvs_continuous instance. Will raise its own exception if it isn't properly set.
+							# Consider a range where the CDF goes from 1e-6 to 1 - 1e-6
+							xrange = [prior.ppf(1e-6),prior.ppf(1.0-1e-6)]
+							prior_x = xrange[0] + np.arange(101)*(xrange[1]-xrange[0])/100.0
+							prior_y = prior.pdf(prior_x) # get the distribution using the PDF function
+							dep_prior = PriorDistribution(np.stack((prior_x,prior_y),axis=0),Normalize=False)
+						else:					
+							# single value of prior
+							# Dependencies cannot be set to a single value
+							error_message = dependency_name+' in Model{0:2d}'.format(model.modelid)+': The prior cannot be single-valued'
+							raise ValueError(error_message)
+					else:
+						if type(prior).__name__ == 'ndarray':
+							dep_prior = PriorDistribution(prior)
+						else:
+							# Unclassifiable prior class. Raise exception.
+							error_message = dependency_name+' in Model{0:2d}'.format(model.modelid)+': Incorrect prior format'
+							raise ValueError(error_message)
+					
+					# Using the dependency grid, calculate the likelihood of the shape parameters on the grid
+					if model.dependencies[dependency_name].shape[-1] == 1:
+						# This dependency is related to the scale parameter
+
+						# Calculate the term to offset the dependency to the most likely prior value
+						offset = dep_prior.characteristic - np.median(model.dependencies[dependency_name])
+
+						# Update the scale parameter prior distribution to reflect the dependency prior
+						# The dependency grid is calculated at the value of the default value of the scale
+						#   parameter. Therefore, the scale parameter prior due to the dependency has the
+						#   same form as the dependency prior, but with a characteristic value that is the
+						#   default scale parameter value + the offset mentioned above.
+						new_prior = dep_prior.prior_grid.copy()
+						new_prior[0,:] += offset + (model.scale_parameter_value - dep_prior.characteristic)
+						priordict[model.scale_parameter_name].update_prior(new_prior)
+
+						# Update the dependency prior
+						dependency_pdf *= np.interp( \
+									   np.squeeze(model.dependencies[dependency_name])+offset,\
+								       dep_prior.prior_grid[0,:],dep_prior.prior_grid[1,:],\
+									   left=0.0,right=0.0)
+					else:
+						# This dependency is independent of the scale parameter
+						# Update the dependency prior only
+						dependency_pdf *= np.interp( \
+									   model.dependencies[dependency_name],\
+								       dep_prior.prior_grid[0,:],dep_prior.prior_grid[1,:],\
+									   left=0.0,right=0.0)
+
+			# If the dependency flag is set, then obtain dependency-based updates to the priors
+			if DependencyFlag:
+			
+				# Obtain the full integration over all shape parameters to normalise the dependency PDF
+				norm = dependency_pdf.copy()
+				for iax in range(len(model.shape_parameter_names),0,-1):	
+					norm = trapz(norm,model.shape_parameter_value_tuple[iax-1],axis=iax-1)			
+				dependency_pdf = dependency_pdf/norm
+
+				# In turns, integrate over all shape parameters except one to yield marginalised PDFs.
+				for ipar in range(len(model.shape_parameter_names)):
+					prior_x = model.shape_parameters[model.shape_parameter_names[ipar]]
+					temp_grid = dependency_pdf.copy()
+					for iax in range(len(model.shape_parameter_names),0,-1):	
+						if iax-1 != ipar:	
+							temp_grid = trapz(temp_grid,model.shape_parameter_value_tuple[iax-1],axis=iax-1)			
+					priordict[model.shape_parameter_names[ipar]].update_prior(np.stack((prior_x,temp_grid),axis=0))
+
 			n_params = len(priordict) # The number of parameters, which is handy for fitting routines
 			
 			Models.append(model)
@@ -417,16 +562,19 @@ class CollectModel:
 
 # ***********************************************************************************************
 
-def prepare_output_file(datacollection,modelcollection,OutputPath=None,description='',fittype='emcee'):
+def prepare_output_file(datacollection,modelcollection,fitengine,OutputPath=None,description=''):
 	""" This function prepares an HDF5 file to store the outputs of the SED fitting.
 		
-		datacollection: An FortesFit CollectData instance. See FortesFit_Preparation for details.
-		modelcollection: An FortesFit CollectModel instance. See FortesFit_Preparation for details.
-		OutputPath: The full path of an existing directory to store the file. Default is current working directory.
-		description: An optional string to describe the fit. Defaults to the galaxy ID.
-		fittype: The fitting routine for which this file will store the output. Used to initialise the storage group.
+		Positional Arguments:
+		 datacollection: An FortesFit CollectData instance. See FortesFit_Preparation for details.
+		 modelcollection: An FortesFit CollectModel instance. See FortesFit_Preparation for details.
+		 fitengine: The fitting engine for which this file will store the output. 
+				     Used to initialise the storage group, and temporary file storage directory, if needed.
+		Keyword Arguments:
+		 OutputPath: The full path of an existing directory to store the file. Default is current working directory.
+		 description: An optional string to describe the fit. Defaults to the galaxy ID.
 
-		returns the file reference of an open HDF5 file. The file should be closed after use.
+		Returns the file reference of an open HDF5 file. The file should be closed after use.
 
 	"""
 	if OutputPath is None:
@@ -436,12 +584,13 @@ def prepare_output_file(datacollection,modelcollection,OutputPath=None,descripti
 	if OutputPath[-1] != '/': OutputPath = OutputPath+'/' 
 	
 	GalaxyName = datacollection.id	
-	FitFileName = GalaxyName+'.FortesFit_output.hdf5'  # Initialise the output file of the fit
+	FitFileName = GalaxyName+'.FortesFit_output.'+fitengine+'.hdf5'  # Initialise the output file of the fit
 	FitFile = h5py.File(OutputPath+FitFileName, 'w')
 
 	FitFile.attrs.create("Object Name",GalaxyName,dtype=np.dtype('S{0:3d}'.format(len(GalaxyName))))
+	FitFile.attrs.create("Fitting Engine",fitengine,dtype=np.dtype('S{0:3d}'.format(len(fitengine))))
 	if len(description) == 0:
-		description = GalaxyName+ ' with FortesFit + '+fittype
+		description = GalaxyName+ ' with FortesFit + '+fitengine
 	FitFile.attrs.create("Description",description,dtype=np.dtype('S{0:3d}'.format(len(description))))
 			
 	FitFile.attrs.create("Redshift",datacollection.redshift.prior_grid) # Store the redshift used for the fit
@@ -487,11 +636,20 @@ def prepare_output_file(datacollection,modelcollection,OutputPath=None,descripti
 				unique_name = '{0:2d}_'.format(modelids[imodel])+modelcollection.parameter_reference[iparam][0]
 				varying_parameters.append(unique_name)
 
-	if fittype == 'emcee':
-		chain = FitFile.create_group("Chain")
-		note = 'Fixed parameters not included in chains.'
-		chain.attrs.create("Note",note,dtype=np.dtype('S{0:3d}'.format(len(note))))
-		chain.create_dataset('Varying_parameters',data=np.core.defchararray.encode(varying_parameters))
+	chain = FitFile.create_group("Chain")
+	note = 'Fixed parameters not included in chains.'
+	chain.attrs.create("Note",note,dtype=np.dtype('S{0:3d}'.format(len(note))))
+	chain.create_dataset('Varying_parameters',data=np.core.defchararray.encode(varying_parameters))
+
+	if fitengine == 'multinest':
+		# Create a multinest output directory if none exists
+		if not os.path.isdir('multinest_output/'):
+			os.mkdir('multinest_output/')
+		else:
+			# Clear the temporary files written by multinest
+			mnfiles = glob.glob('multinest_output/*')
+			for file in mnfiles:
+				os.remove(file)
 
 	return FitFile
 

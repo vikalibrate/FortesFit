@@ -126,6 +126,7 @@ def	SummaryFigures(FortesFit_OutFile, BurnIn=10000, old=False):
 		FortesFit_Outfile:  HDF5 file with the outputs from FortesFit
 		BurnIn: The number of samples on the MCMC chains to exclude to allow for convergence
 	
+		returns a list with Figure instances for chain and corner plots
 	"""		
 	
 	plt.close('all') # Delete all existing plots
@@ -168,7 +169,16 @@ def	SummaryFigures(FortesFit_OutFile, BurnIn=10000, old=False):
 		axrange = parax.axis()
 		parax.plot([0,nsamples+1],[bestparam_dict[ParameterNames[ipar]][0],bestparam_dict[ParameterNames[ipar]][0]],'k--')
 		parax.axis(axrange)
-		plt.ylabel(ParameterNames[ipar],fontsize=10)
+
+		# Reasonable ticks (2 per parameter)
+		yticks = parax.get_yticks()
+		nskip = np.int(len(yticks)/2)
+		parax.set_yticks(yticks[1::nskip])
+		parax.tick_params(axis='y',labelsize='small')
+
+		# Parameter Labels	
+		chainfig.text(xsta+0.01*dx,yend-(ipar+0.95)*dy,ParameterNames[ipar][3:],fontsize='small',ha='left')
+
 		if (ipar == 0):
 			plt.title(ObjectName) 
 		if (ipar == nparams-1):
@@ -176,18 +186,33 @@ def	SummaryFigures(FortesFit_OutFile, BurnIn=10000, old=False):
 		else:
 			parax.tick_params(axis='x',labelbottom='off')
 
+
 	# Corner plot
 	param_ranges = fitresult.percentiles(Quantiles=[1,99])
 	drange = [param_ranges[param][1]-param_ranges[param][0] for param in ParameterNames]
-	ranges = [(param_ranges[param][0]-0.33*drange[i],param_ranges[param][1]+0.33*drange[i]) for i,param in enumerate(ParameterNames)]
+	ranges = [(param_ranges[param][0]-0.33*drange[i],param_ranges[param][1]+0.33*drange[i]) \
+			   for i,param in enumerate(ParameterNames)]
 	# cornerfig = ccinst.plot(figsize=0.9,extents=ranges)
 	cornerfig, corneraxes = plt.subplots(nrows=nparams,ncols=nparams,figsize=(8,8))
-	corner(samples,labels=ParameterNames,range=ranges,label_kwargs={'fontsize':8},fig=cornerfig,\
-			max_n_ticks=2,top_ticks=True,tick_params={'axis':'both','labelsize':'small'})
+#	corner(samples,labels=ParameterNames,range=ranges,label_kwargs={'fontsize':8},fig=cornerfig,\
+	corner(samples,range=ranges,label_kwargs={'fontsize':8},fig=cornerfig,\
+			max_n_ticks=3,top_ticks=False)
+	for ix in range(nparams):
+		for iy in range(nparams):
+			corneraxes[ix,iy].tick_params(axis='both',labelsize=8)
+	cornerfig.text(0.65,0.98,'Label  Model  Parameter           ',ha='left',size='medium')
+	#print("""Model   Parameter           """)
+	for iparam in range(nparams):
+		modelname = ParameterNames[iparam][0:2]
+		parname   = ParameterNames[iparam][3:]
+		writestring = '{0:<7d}{1:7s}{2:20s}'.format(iparam+1,modelname.strip(),parname.strip())
+		#print(writestring)
+		cornerfig.text(0.65,0.98-iparam*0.03-0.05,writestring,ha='left',size='medium')
+		
 
 	plt.show()
 		
-	return None
+	return [chainfig,cornerfig]
 
 
 # ***********************************************************************************************
@@ -321,7 +346,13 @@ def	PlotModelSEDs(FortesFit_OutFile, wave_range = [1e-1,1e3], BurnIn=10000, PDF_
 	plt.errorbar(FilterWave[index],plotfluxes,eplotfluxes,fmt='ko',ecolor='k')
 	index, = np.where((Fluxes > 0.0) & (FluxErrors < 0.0))
 	fluxconv = FilterWave[index]
-	plt.plot(FilterWave[index],Fluxes[index]*fluxconv,'kv',markersize=10)
+	for i in range(len(index)):
+		plt.annotate("", xy=(FilterWave[index[i]],0.5*Fluxes[index[i]]*fluxconv[i]),\
+					 xytext=(FilterWave[index[i]],Fluxes[index[i]]*fluxconv[i]),arrowprops=dict(arrowstyle="->"))
+#		plt.arrow(FilterWave[index[i]],Fluxes[index[i]]*fluxconv[i],0.0,-0.5*Fluxes[index[i]]*fluxconv[i],\
+#				  fc="k", ec="k", width=0.005*FilterWave[index[i]],\
+#				  head_width=0.1*FilterWave[index[i]], head_length=0.3*FilterWave[index[i]])
+	#plt.plot(FilterWave[index],Fluxes[index]*fluxconv,'kv',markersize=10)
 
 	plt.loglog()
 	plt.xlabel(r'log Observed Wavelength ($\mu$m)',size='x-large')
