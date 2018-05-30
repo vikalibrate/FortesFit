@@ -2,7 +2,7 @@ import sys
 import os
 import shutil
 import glob
-import importlib
+import importlib.util
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import interpolate
@@ -265,16 +265,17 @@ class FitModel:
 		# Read in two cubes that span the input redshift, using HDF5 group/dataset == redshift/filter
 		hypercube = self.model_photometry[FilterID][zindex]
 
-		# If any element of the hypercube is -inf == no model photometry, skip the interpolation and set flux = -np.inf
-# 		if (np.any(np.isneginf(hypercube))):
-# 			flux = -1.0*np.inf
-# 		else:					
-		#  Use scipy.RegularGridInterpolator multi-D interpolation, linear mode, 
-		#    to get the model flux for the parameter value in each cube and at the intermediate redshift
-		interpolation_function = interpolate.RegularGridInterpolator(self.shape_parameter_value_tuple, hypercube,\
-										method='linear', bounds_error=False, fill_value=-1.0*np.inf)
-		interpolants = [parameters[key] for key in self.shape_parameter_names]
-		flux = interpolation_function(np.array(interpolants)) + (parameters[self.scale_parameter_name] - self.scale_parameter_value)
+		
+		if len(self.shape_parameter_names) == 0:
+			# If this is only a scaled model (no shape parameters), catch this case
+			flux = hypercube + (parameters[self.scale_parameter_name] - self.scale_parameter_value)
+		else:
+			#  Use scipy.RegularGridInterpolator multi-D interpolation, linear mode, 
+			#    to get the model flux for the parameter value in each cube and at the intermediate redshift
+			interpolation_function = interpolate.RegularGridInterpolator(self.shape_parameter_value_tuple, hypercube,\
+											method='linear', bounds_error=False, fill_value=-1.0*np.inf)
+			interpolants = [parameters[key] for key in self.shape_parameter_names]
+			flux = interpolation_function(np.array(interpolants)) + (parameters[self.scale_parameter_name] - self.scale_parameter_value)
 		if np.isfinite(flux):
 			return flux
 		else:
@@ -282,33 +283,31 @@ class FitModel:
 	
 
 	def evaluate_dependency(self,parameters,DependencyName):
-		""" Evaluate the observed model flux
+		""" Evaluate the value of dependency given parameters
 			
 			Given a dictionary of parameter values (continuous, not just at pivots),
 			and the name of a dependency, return the value of the dependency.
-			
-			The redshift grid point closest to the input redshift is used for the evaluation.
-			** Not complete **
-							
+										
 		"""
-		
-		zindex = np.argmin(np.abs(self.redshifts-redshift)) # minimum of absolute difference between input redshift and grid
+					
+		# Get the cube of dependency values
+		hypercube = self.dependencies[DependencyName]
+		if hypercube.shape[-1] == 1:
+			# this dependency has a scale parameter dependence, in addition to shape parameters
+			scale = parameters[self.scale_parameter_name] - self.scale_parameter_value
+			hypercube = np.squeeze(hypercube)
+		else:
+			# Dependency only depends on shape parameters
+			scale = 0.0
 			
-		# Read in two cubes that span the input redshift, using HDF5 group/dataset == redshift/filter
-		hypercube = self.model_photometry[FilterID][zindex]
-
-		# If any element of the hypercube is -inf == no model photometry, skip the interpolation and set flux = -np.inf
-# 		if (np.any(np.isneginf(hypercube))):
-# 			flux = -1.0*np.inf
-# 		else:					
 		#  Use scipy.RegularGridInterpolator multi-D interpolation, linear mode, 
 		#    to get the model flux for the parameter value in each cube and at the intermediate redshift
 		interpolation_function = interpolate.RegularGridInterpolator(self.shape_parameter_value_tuple, hypercube,\
 										method='linear', bounds_error=False, fill_value=-1.0*np.inf)
 		interpolants = [parameters[key] for key in self.shape_parameter_names]
-		flux = interpolation_function(np.array(interpolants)) + (parameters[self.scale_parameter_name] - self.scale_parameter_value)
-		if np.isfinite(flux):
-			return flux
+		dependency = interpolation_function(np.array(interpolants)) 
+		if np.isfinite(dependency):
+			return dependency
 		else:
 			return -1.0*np.inf 
 
@@ -371,7 +370,8 @@ class FitModel:
 
 def register_model(read_module, parameters, scale_parameter_name, \
 				   description='None', \
-				   redshift_array=FortesFit_Settings.PivotRedshifts,filterids=[]):
+				   redshift_array=FortesFit_Settings.PivotRedshifts,filterids=[],\
+				   silent=False):
 	""" Register a model for use by FORTES-FIT 
 	
 	A model is a family of SEDs which are identified by a set of unique parameters. Models
@@ -398,6 +398,8 @@ def register_model(read_module, parameters, scale_parameter_name, \
 	filterids: array-like, sequence of FortesFit filter ids to register for the model. 
 			   	If zero-length (default), all filters in the database are added.
 				If the filter database is large, the default can be prohibitive in terms of processing time.			
+	silent: If true, suppress interactive input and non-error messages. Not recommended unless the model 
+			has been thoroughly tested.
 
 	returns the new model ID
 	
@@ -446,7 +448,7 @@ def register_model(read_module, parameters, scale_parameter_name, \
 	# Read existing models and create a list of model ID numbers
 	OldModelFiles = glob.glob(FortesFit_Settings.ModelPhotometryDirectory+'Model??')
 	if(len(OldModelFiles) == 0):
-		print('Warning: No existing models found! If this is not your first model, check settings.')
+		if not silent: print('Warning: No existing models found! If this is not your first model, check settings.')
 	OldIDs = []
 	for OldFile in OldModelFiles:
 		OldIDs.append(np.int(os.path.basename(OldFile)[-2:]))
@@ -460,18 +462,27 @@ def register_model(read_module, parameters, scale_parameter_name, \
 		if(NewID not in OldIDs):
 			NewIDChecked = True					
 
-	# Determine the number of model parameters and the number of pivot points per parameter
-	ShapeParamNames  = sorted(parameters.keys()) # Parameters in alphabetical order of their names
-	ShapeParamNames.remove(scale_parameter_name) # Exclude the scale parameter
-	ShapeParamPoints = []
-	for param in ShapeParamNames:
-		ShapeParamPoints.append(len(parameters[param]))
-	print('This model has {0:<d} shape parameters, sampled at a total of {1:<d} pivot points'.\
-		   format(len(ShapeParamNames),np.int(np.prod(ShapeParamPoints))))
-	ch = input('If this looks reasonable, continue by entering "y" : ')
-	if (ch[0] != 'y'):
-		print('Exitting without registering the model.')
-		exit()
+	if len(parameters) == 1:
+		# If this is only a scaled model (no shape parameters), catch this case
+		ShapeParamNames  = [] 
+		ShapeParamPoints = []
+		if not silent: print('This model has no shape parameters')
+	else:
+		# Determine the number of model parameters and the number of pivot points per parameter
+		ShapeParamNames  = sorted(parameters.keys()) # Parameters in alphabetical order of their names
+		ShapeParamNames.remove(scale_parameter_name) # Exclude the scale parameter
+		ShapeParamPoints = []
+		for param in ShapeParamNames:
+			ShapeParamPoints.append(len(parameters[param]))
+		if not silent: 
+			print('This model has {0:<d} shape parameters, sampled at a total of {1:<d} pivot points'.\
+			   format(len(ShapeParamNames),np.int(np.prod(ShapeParamPoints))))
+
+	if not silent: 
+		ch = input('If this looks reasonable, continue by entering "y" : ')
+		if (ch[0] != 'y'):
+			print('Exitting without registering the model.')
+			sys.exit()
 	
 	# Do a trial readin and filter application for the model script with the first filter in the list. 
 	# If this fails, halt registration and return.
@@ -500,7 +511,6 @@ def register_model(read_module, parameters, scale_parameter_name, \
 	ModelFile.attrs.create("ReadinFunction",read_module,dtype=np.dtype('S{0:3d}'.format(len(read_module))))
 	
 	# Populate a set of higher level attributes.
-	# Names of the scale parameter and its value 
 	ModelFile.attrs.create("ScaleParameterName",scale_parameter_name,dtype='S20')
 	ModelFile.attrs.create("ScaleParameterValue",parameters[scale_parameter_name],dtype='f4')
 	# Names of all the shape parameters, the pivot values for all shape parameters. 
@@ -539,14 +549,17 @@ def register_model(read_module, parameters, scale_parameter_name, \
 		zpiv = ModelFile.create_group(GroupName)
 	
 				
-		for iparam in range(np.prod(ShapeParamPoints)):
-			# Loop over all shape parameters
-			# unravel indices to access the pivot points of each parameter
-			paramgen = np.unravel_index(iparam,ShapeParamPoints,order='C')
-			# fill the temporary parameter dictionary for the call to the read_function
-			for i,key in enumerate(ShapeParamNames):
-				param_subset[key] = parameters[key][paramgen[i]]
-			
+		for iparam in range(int(np.prod(ShapeParamPoints))):
+			# If there are shape parameters, loop over all of them
+			if len(ShapeParamNames) == 0:
+				paramgen = []
+			else:
+				# unravel indices to access the pivot points of each parameter
+				paramgen = np.unravel_index(iparam,ShapeParamPoints,order='C')
+				# fill the temporary parameter dictionary for the call to the read_function
+				for i,key in enumerate(ShapeParamNames):
+					param_subset[key] = parameters[key][paramgen[i]]
+					
 			# Call the readin function
 			sed = ReadModule.readin(param_subset,redshift_array[iz],templates=templates)
 			# Interpolate the model onto the default wavelength scale
@@ -574,13 +587,13 @@ def register_model(read_module, parameters, scale_parameter_name, \
 		
 		ModelFile.flush() # Flush the HDF5 file to disk
 		# Write out a counter to tell the user how many redshift points have been processed
-		print("{0:<3d} redshift points processed".format(iz+1),end="\r")
+		if not silent: print("{0:<3d} redshift points processed".format(iz+1),end="\r")
 #		if (iz > 0) and (iz%50 == 0):
 #			print('{0:>3d} redshift points processed'.format(iz))
 			 
 	ModelFile.close()
-	
 	# Update the model summary table
+	print(' ')
 	summarize_models()
 			
 	return NewID
@@ -885,9 +898,7 @@ def summarize_models():
 		print('No existing models found.')
 		return []
 	for ModelDir in ModelDirList:
-		ModelID = np.int(os.path.basename(ModelDir)[-2:])
-		print('Processing model: {0:6d}'.format(ModelID))
-		
+		ModelID = np.int(os.path.basename(ModelDir)[-2:])		
 		ModelFile = ModelDir+'/{0:2d}.fortesmodel.hdf5'.format(ModelID)
 		Model = h5py.File(ModelFile,'r')
 		ModelDesc = Model.attrs['Description']
@@ -1004,6 +1015,12 @@ def test_model_registration(read_module, parameters, scale_parameter_name, \
 
 	# Determine the number of model parameters and the number of pivot points per parameter
 	ShapeParamNames  = sorted(parameters.keys()) # Parameters in alphabetical order of their names
+	# Check to make sure that all the parameter name strings are < 20 characters
+	for parname in ShapeParamNames:
+		if len(parname) > 20:
+			print('The string '+parname+' is too long. Parameter names should be <=20 characters in length.')
+			return []				
+
 	ShapeParamNames.remove(scale_parameter_name) # Exclude the scale parameter
 	ShapeParamPoints = []
 	for param in ShapeParamNames:

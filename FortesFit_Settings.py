@@ -4,7 +4,9 @@ from astropy.cosmology import WMAP9 as FortesFit_Cosmology
 
 #  Paths
 FortesFit_Path  = os.getenv('FORTESFITPATH','None')
-RoutinesDirectory = FortesFit_Path+'fortesfit/'
+if FortesFit_Path[-1] != '/':
+	FortesFit_Path += '/'
+
 FilterDirectory = FortesFit_Path+'FortesFit_Filters/'
 ModelPhotometryDirectory = FortesFit_Path+'FortesFit_ModelPhotometry/'
 

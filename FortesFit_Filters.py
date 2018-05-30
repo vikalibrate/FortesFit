@@ -103,8 +103,8 @@ def register_filter(wavelength, throughput, format='photon', reference='User', d
 					
 	# Read existing filters and create a list of filter ID numbers (which are the same as the filternames)
 	OldFilterFiles = glob.glob(FortesFit_Settings.FilterDirectory+'*.fortesfilter.xml')
-	if(len(OldFilterFiles) == 0):
-		print('Warning: No existing filters found! Check settings.')
+	if(len(OldFilterFiles) == 1):
+		print('You are registering your first filter. Exciting!')
 	OldIDs = []
 	for OldFile in OldFilterFiles:
 		OldIDs.append(np.int(os.path.basename(OldFile).split('.')[0]))
