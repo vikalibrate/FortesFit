@@ -14,9 +14,9 @@ A basis fitting procedure involves:
   
  - Registration of the models used for the fits, using the routines in FortesFit_ModelManagement. These are stored to disk and can be used for future fitting projects. Filters can be freely added to existing models after registration.
  
-   - Setting up the observed SED(s) for fitting routines in FortesFit_Preparation. An example script is included with best practices. The units functionality of Astropy is used by FortesFit to homogenise photometry.
+ - Setting up the observed SED(s) for fitting routines in FortesFit_Preparation. An example script is included with best practices. The units functionality of Astropy is used by FortesFit to homogenise photometry.
   
-- Initialisation of the priors used in the fit. FortesFit is unique in astronomical SED fitting codes for its versatile use of priors. These may be specified in the form of a grid or using the distributions available from the stats subpackage in SciPy. Parameters without user-defined priors are assigned a default uninformative prior. However, parameters that determine the scale of the SED components (for e.g., the luminosity or stellar mass of a template) must have their priors defined.
+ - Initialisation of the priors used in the fit. FortesFit is unique in astronomical SED fitting codes for its versatile use of priors. These may be specified in the form of a grid or using the distributions available from the stats subpackage in SciPy. Parameters without user-defined priors are assigned a default uninformative prior. However, parameters that determine the scale of the SED components (for e.g., the luminosity or stellar mass of a template) must have their priors defined.
  
  
 The FortesFit_Preparation module includes handy functions that help organise and prepare the photometry, models, prior descriptions and output files before running a fit.
