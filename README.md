@@ -8,6 +8,9 @@ SEDs are the fundamental spectral (i.e., energy-dependent) descriptions of astro
 
 In FortesFit, we distinguish between SEDs and spectrograms (or spectra). The latter are generally continguous and offer a higher spectral resolution compared to SEDs. For our purposes, we define an SED as a collection of photometry taken through individual filter bands (physical or synthetic). A filter band describes the response of the astronomical observation (composed of the atmosphere, telescope, instrument, and detector) to the light from the source. Therefore, it encapsulates the actual spectral information inherent in the corresponding photometry from the SED. In FortesFit, the independent variable is not specified by the monochromatic energy of the radiation, but the filter bands used to observe the astronomical source. 
 
+Installation: The code can be installed using PIP ($ pip install fortesfit) or cloned directly from GitHub. PIP installation is recommended. After installation, set an environment variable called FORTESFITPATH to a location where filters and model photometry will be stored. Then run the modules FortesFit_Init, which sets up a test filter and model, followed by FortesFit_installation_test, which does an end-to-end fit using the testing setup. 
+
+
 A basis fitting procedure involves:
 
   - Registration of the filters used for the fits, using the routines in FortesFit_Filters. These are stored to disk and can be used for future fitting projects.
