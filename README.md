@@ -8,15 +8,18 @@ SEDs are the fundamental spectral (i.e., energy-dependent) descriptions of astro
 
 In FortesFit, we distinguish between SEDs and spectrograms (or spectra). The latter are generally continguous and offer a higher spectral resolution compared to SEDs. For our purposes, we define an SED as a collection of photometry taken through individual filter bands (physical or synthetic). A filter band describes the response of the astronomical observation (composed of the atmosphere, telescope, instrument, and detector) to the light from the source. Therefore, it encapsulates the actual spectral information inherent in the corresponding photometry from the SED. In FortesFit, the independent variable is not specified by the monochromatic energy of the radiation, but the filter bands used to observe the astronomical source. 
 
+Installation: The code can be installed using PIP ($ pip install fortesfit) or cloned directly from GitHub. PIP installation is recommended. After installation, set an environment variable called FORTESFITPATH to a location where filters and model photometry will be stored. Then run the modules FortesFit_Init, which sets up a test filter and model, followed by FortesFit_installation_test, which does an end-to-end fit using the testing setup. 
+
+
 A basis fitting procedure involves:
 
   - Registration of the filters used for the fits, using the routines in FortesFit_Filters. These are stored to disk and can be used for future fitting projects.
   
  - Registration of the models used for the fits, using the routines in FortesFit_ModelManagement. These are stored to disk and can be used for future fitting projects. Filters can be freely added to existing models after registration.
  
-   - Setting up the observed SED(s) for fitting routines in FortesFit_Preparation. An example script is included with best practices. The units functionality of Astropy is used by FortesFit to homogenise photometry.
+ - Setting up the observed SED(s) for fitting routines in FortesFit_Preparation. An example script is included with best practices. The units functionality of Astropy is used by FortesFit to homogenise photometry.
   
-- Initialisation of the priors used in the fit. FortesFit is unique in astronomical SED fitting codes for its versatile use of priors. These may be specified in the form of a grid or using the distributions available from the stats subpackage in SciPy. Parameters without user-defined priors are assigned a default uninformative prior. However, parameters that determine the scale of the SED components (for e.g., the luminosity or stellar mass of a template) must have their priors defined.
+ - Initialisation of the priors used in the fit. FortesFit is unique in astronomical SED fitting codes for its versatile use of priors. These may be specified in the form of a grid or using the distributions available from the stats subpackage in SciPy. Parameters without user-defined priors are assigned a default uninformative prior. However, parameters that determine the scale of the SED components (for e.g., the luminosity or stellar mass of a template) must have their priors defined.
  
  
 The FortesFit_Preparation module includes handy functions that help organise and prepare the photometry, models, prior descriptions and output files before running a fit.
