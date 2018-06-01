@@ -10,8 +10,10 @@ In FortesFit, we distinguish between SEDs and spectrograms (or spectra). The lat
 
 Installation: The code can be installed using PIP ($ pip install fortesfit) or cloned directly from GitHub. PIP installation is recommended. After installation, set an environment variable called FORTESFITPATH to a location where filters and model photometry will be stored. Then run the modules FortesFit_Init, which sets up a test filter and model, followed by FortesFit_installation_test, which does an end-to-end fit using the testing setup. 
 
+Once this is successful, the user writes a Python program that incorporates FortesFit classes and functions to set up the data, models, priors, engine, and output for a fit. The FortesFit_Preparation module includes handy functions that help organise and prepare the photometry, models, prior descriptions and output files before running a fit. The FortesFit_Fitting module contains the wrappers to the fitting engines. At present, an MCMC engine from the EMCEE package is the default approach. If MultiNest and PyMultinest are installed on the user's system, this may also be used for fitting. Both simpler MLE or least-squares fitting engines are planned. The structure of FortesFit separates the handling and processing of data and models from the fitting engines themselves, giving the user the functionality to design and test various classes of models in an agile fashion.  
 
-A basis fitting procedure involves:
+
+The fitting process usually involves:
 
   - Registration of the filters used for the fits, using the routines in FortesFit_Filters. These are stored to disk and can be used for future fitting projects.
   
@@ -21,11 +23,12 @@ A basis fitting procedure involves:
   
  - Initialisation of the priors used in the fit. FortesFit is unique in astronomical SED fitting codes for its versatile use of priors. These may be specified in the form of a grid or using the distributions available from the stats subpackage in SciPy. Parameters without user-defined priors are assigned a default uninformative prior. However, parameters that determine the scale of the SED components (for e.g., the luminosity or stellar mass of a template) must have their priors defined.
  
+ - Setting up the combination of models and priors for the fit, using routines in FortesFit_Preparation. This is also the point where the mechanics of the fit (output files, fitting algorithm, etc.) are chosen.
  
-The FortesFit_Preparation module includes handy functions that help organise and prepare the photometry, models, prior descriptions and output files before running a fit.
-
-The FortesFit_Fitting module contains the wrappers to the fitting engines. At present, an MCMC engine from the EMCEE package is the default approach. If MultiNest and PyMultinest are installed on the user's system, this may also be used for fitting. Both simpler MLE or least-squares fitting engines are planned. The structure of FortesFit separates the handling and processing of data and models from the fitting engines themselves, giving the user the functionality to design and test various classes of models in an agile fashion.  
-
+ - Running the fit using functions under FortesFit_Fitting.
+ 
+ - Examining the fit results using routines under FortesFit_Plots
+ 
 FortesFit has been used successfully to fit:
   - The infra-red SEDs of nearby AGN from 1-1000 um with stellar, AGN and SF-heated dust components (Rosario+ 2017)
   - The mid-far infrared SEDs of a few local AGN with clumpy torus SED models (5-10 parameters) and SF-heated dust.
