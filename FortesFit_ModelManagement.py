@@ -367,6 +367,121 @@ class FitModel:
 
 # ***********************************************************************************************
 
+def test_model_registration(read_module, parameters, scale_parameter_name, \
+				   redshift_array=FortesFit_Settings.PivotRedshifts,filterids=[],silent=False):
+	""" Test the registration code for a model before actual registration 
+	
+	read_module: a string name for a module available either in the PYTHONPATH or the working
+			directory which contains a function called 'readin'. This
+			accepts a value for each parameter in the form of a dictionary, a redshift, 
+			and an optional templates keyword.
+			It must return an SED consisting of a dictionary of matched arrays with keys
+			'wavelength' (microns) and 'observed flux' (erg/s/cm^2/micron).
+			The module can contain an optional function 'readtemplates' which can be called
+			first to read a set of templates to save disk operations. The
+			user must ensure that the templates are intelligible to the readin function.  
+	
+	scale_parameter_name: the name of the single unique scale parameter, string
+	parameters: all model parameters, including the scale parameter normalisation value, as a dictionary
+	redshift_array: An array of redshifts on which to evaluate the model. Default is the FortesFit Settings redshift array
+	filterids: array-like, sequence of FortesFit filter ids to register for the model. 
+			   	If zero-length (default), all filters in the database are added.
+				If the filter database is large, the default can be prohibitive in terms of processing time.			
+	silent: supress disgnostic output to stdout
+
+	returns None
+		
+	"""
+	
+	# Check the order of the parameters. These must be supplied strictly is ascending order to ensure that the
+	# interpolation routines used behave correctly
+	for param in parameters:
+		# Only shape parameters are multiply valued
+		if param != scale_parameter_name:
+			for ival in range(len(parameters[param])-1):
+				if (parameters[param][ival] > parameters[param][ival+1]):
+					print(param+' is not supplied in ascending order')
+					return []				
+
+	try:
+		ReadModule = __import__(read_module)
+	except ImportError:
+		if not silent: print('reader module not available')
+		return []
+	
+	# If there is a readtemplates function in the readmodule, call it to get the templates
+	#   to provide to the readin function. This can help speed up the read in process, and is necessary
+	#   for some readmodules.
+	if 'readtemplates' in dir(ReadModule):
+		templates = ReadModule.readtemplates()
+	else:
+		templates = None
+
+	# Store all filters in the form of a list of filter class objects
+	FilterList = [] # Initialise the list of filters
+	if (len(filterids) == 0):
+		# No specific filterids provided. Use the full complement of FORTESFIT filters
+		FilterFileList = glob.glob(FortesFit_Settings.FilterDirectory+'*.fortesfilter.xml')
+		# Catch situation where there are no current FORTESFIT filters
+		if(len(FilterFileList) == 0):
+			if not silent:
+				print('No filters found. Register your first filter!')
+			raise ValueError('No filter files found')
+			return []
+		for filterfile in FilterFileList:
+			filterid = np.int(os.path.basename(filterfile).split('.')[0])
+			filter = FortesFit_Filters.FortesFit_Filter(filterid)
+			FilterList.append(filter)
+	else:
+		# At least one specific filter has been supplied
+		# Check to ensure that the filterids are unique. If they are not, raise an error.
+		if len(np.unique(filterids)) != len(filterids):
+			raise RuntimeError('Filter list has duplicates.')			
+		for filterid in filterids:
+			filter = FortesFit_Filters.FortesFit_Filter(filterid)
+			FilterList.append(filter)
+
+	# Initialise the wavelength array that is used for filter processing (from 100 Ang to 10mm) in log microns
+	ObsWave = -2.0 + np.arange(1001)*(6.0/1000.0)
+
+	# Determine the number of model parameters and the number of pivot points per parameter
+	ShapeParamNames  = sorted(parameters.keys()) # Parameters in alphabetical order of their names
+	# Check to make sure that all the parameter name strings are < 20 characters
+	for parname in ShapeParamNames:
+		if len(parname) > 20:
+			print('The string '+parname+' is too long. Parameter names should be <=20 characters in length.')
+			return []				
+
+	ShapeParamNames.remove(scale_parameter_name) # Exclude the scale parameter
+	ShapeParamPoints = []
+	for param in ShapeParamNames:
+		ShapeParamPoints.append(len(parameters[param]))
+	if not silent:
+		print('This model has {0:<d} shape parameters, sampled at a total of {1:<d} pivot points'.\
+		   format(len(ShapeParamNames),np.int(np.prod(ShapeParamPoints))))
+	
+	# Do a trial readin and filter application for the model script with the first filter in the list. 
+	# If this fails, halt registration and return.
+	
+	# A dictionary of the first entries of all parameters
+	testparams = {}
+	for param in ShapeParamNames:
+		testparams.update({param:parameters[param][0]})
+	testparams.update({scale_parameter_name:parameters[scale_parameter_name]})
+	# Call the readin function
+	sed = ReadModule.readin(testparams,redshift_array[0],templates=templates)
+	# Interpolate the model onto the default wavelength scale
+	ObsFlux = np.interp(ObsWave,np.log10(sed['observed_wavelength']),np.log10(sed['observed_flux']),\
+				left=-np.inf,right=-np.inf)
+	testmodelphotsingle = FilterList[0].apply({'wavelength':10**ObsWave,'flux':10**ObsFlux})
+
+
+	if not silent:  print('Trial readin passed. You can proceed with registration of this model.')
+	return
+
+
+# ***********************************************************************************************
+
 
 def register_model(read_module, parameters, scale_parameter_name, \
 				   description='None', \
@@ -937,113 +1052,3 @@ def delete_model(ModelID):
 	summarize_models()
 
 
-# ***********************************************************************************************
-
-def test_model_registration(read_module, parameters, scale_parameter_name, \
-				   redshift_array=FortesFit_Settings.PivotRedshifts,filterids=[],silent=False):
-	""" Test the registration code for a model before actual registration 
-	
-	read_module: a string name for a module available either in the PYTHONPATH or the working
-			directory which contains a function called 'readin'. This
-			accepts a value for each parameter in the form of a dictionary, a redshift, 
-			and an optional templates keyword.
-			It must return an SED consisting of a dictionary of matched arrays with keys
-			'wavelength' (microns) and 'observed flux' (erg/s/cm^2/micron).
-			The module can contain an optional function 'readtemplates' which can be called
-			first to read a set of templates to save disk operations. The
-			user must ensure that the templates are intelligible to the readin function.  
-	
-	scale_parameter_name: the name of the single unique scale parameter, string
-	parameters: all model parameters, including the scale parameter normalisation value, as a dictionary
-	redshift_array: An array of redshifts on which to evaluate the model. Default is the FortesFit Settings redshift array
-	filterids: array-like, sequence of FortesFit filter ids to register for the model. 
-			   	If zero-length (default), all filters in the database are added.
-				If the filter database is large, the default can be prohibitive in terms of processing time.			
-	silent: supress disgnostic output to stdout
-
-	returns None
-		
-	"""
-	
-	# Check the order of the parameters. These must be supplied strictly is ascending order to ensure that the
-	# interpolation routines used behave correctly
-	for param in parameters:
-		# Only shape parameters are multiply valued
-		if param != scale_parameter_name:
-			for ival in range(len(parameters[param])-1):
-				if (parameters[param][ival] > parameters[param][ival+1]):
-					print(param+' is not supplied in ascending order')
-					return []				
-
-	try:
-		ReadModule = __import__(read_module)
-	except ImportError:
-		if not silent: print('reader module not available')
-		return []
-	
-	# If there is a readtemplates function in the readmodule, call it to get the templates
-	#   to provide to the readin function. This can help speed up the read in process, and is necessary
-	#   for some readmodules.
-	if 'readtemplates' in dir(ReadModule):
-		templates = ReadModule.readtemplates()
-	else:
-		templates = None
-
-	# Store all filters in the form of a list of filter class objects
-	FilterList = [] # Initialise the list of filters
-	if (len(filterids) == 0):
-		# No specific filterids provided. Use the full complement of FORTESFIT filters
-		FilterFileList = glob.glob(FortesFit_Settings.FilterDirectory+'*.fortesfilter.xml')
-		# Catch situation where there are no current FORTESFIT filters
-		if(len(FilterFileList) == 0):
-			if not silent:
-				print('No filters found. Register your first filter!')
-			raise ValueError('No filter files found')
-			return []
-		for filterfile in FilterFileList:
-			filterid = np.int(os.path.basename(filterfile).split('.')[0])
-			filter = FortesFit_Filters.FortesFit_Filter(filterid)
-			FilterList.append(filter)
-	else:
-		# At least one specific filter has been supplied
-		for filterid in filterids:
-			filter = FortesFit_Filters.FortesFit_Filter(filterid)
-			FilterList.append(filter)
-
-	# Initialise the wavelength array that is used for filter processing (from 100 Ang to 10mm) in log microns
-	ObsWave = -2.0 + np.arange(1001)*(6.0/1000.0)
-
-	# Determine the number of model parameters and the number of pivot points per parameter
-	ShapeParamNames  = sorted(parameters.keys()) # Parameters in alphabetical order of their names
-	# Check to make sure that all the parameter name strings are < 20 characters
-	for parname in ShapeParamNames:
-		if len(parname) > 20:
-			print('The string '+parname+' is too long. Parameter names should be <=20 characters in length.')
-			return []				
-
-	ShapeParamNames.remove(scale_parameter_name) # Exclude the scale parameter
-	ShapeParamPoints = []
-	for param in ShapeParamNames:
-		ShapeParamPoints.append(len(parameters[param]))
-	if not silent:
-		print('This model has {0:<d} shape parameters, sampled at a total of {1:<d} pivot points'.\
-		   format(len(ShapeParamNames),np.int(np.prod(ShapeParamPoints))))
-	
-	# Do a trial readin and filter application for the model script with the first filter in the list. 
-	# If this fails, halt registration and return.
-	
-	# A dictionary of the first entries of all parameters
-	testparams = {}
-	for param in ShapeParamNames:
-		testparams.update({param:parameters[param][0]})
-	testparams.update({scale_parameter_name:parameters[scale_parameter_name]})
-	# Call the readin function
-	sed = ReadModule.readin(testparams,redshift_array[0],templates=templates)
-	# Interpolate the model onto the default wavelength scale
-	ObsFlux = np.interp(ObsWave,np.log10(sed['observed_wavelength']),np.log10(sed['observed_flux']),\
-				left=-np.inf,right=-np.inf)
-	testmodelphotsingle = FilterList[0].apply({'wavelength':10**ObsWave,'flux':10**ObsFlux})
-
-
-	if not silent:  print('Trial readin passed. You can proceed with registration of this model.')
-	return
