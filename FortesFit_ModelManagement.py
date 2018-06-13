@@ -957,6 +957,7 @@ def add_model_dependency(ModelID, dependency_function, dependency_name=''):
 		DatasetName = 'Dependencies/'+dependency_name	
 		ModelFile.create_dataset(DatasetName,data=dependency)
 		ModelFile.close()			
+		print('The dependency '+dependency_name+' has been added.')
 	except:
 		print('Cannot add this dependency to the HDF5 file')
 
