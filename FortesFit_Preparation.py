@@ -20,8 +20,58 @@ from fortesfit.FortesFit_ModelManagement import FitModel
 
 """ A module with classes and functions that organise the process of setting up a fitting run  """
 
+# ***********************************************************************************************
+
+def process_PDF(pdf_grid,parameter_range=None,Normalize=True):
+	""" Process a supplied distribution in a form useful for FortesFit applications
+		
+		pdf_grid: A 2xN array, the first row is a grid in the parameter, 
+				  the second row is the probability density function on the grid.
+				  The array does not need to be sorted, and the pdf does not have to be normalised
+		parameter_range: optional 2 element list-like, with [low, high] specifying the range in which
+					the PDF is valid, in case it is smaller than the range of the grid.			
+		Normalize: normalise the PDF to integrate to unity.
+												
+	"""
+
+	ngrid = 1001
+		
+	# Sort the prior grid low to high in the parameter
+	sortindex = np.argsort(pdf_grid[0,:])
+	pdf_orig_x = pdf_grid[0,sortindex]
+	pdf_orig_y = pdf_grid[1,sortindex]
+
+	# set all points with very low probability (< 1e-6 of the peak) to 0.0
+	# SciPy RVS based distributions will already be forced to this range
+	index, = np.where(pdf_orig_y < 1e-6*pdf_orig_y.max())
+	pdf_orig_y[index] = 0.0
+
+	if parameter_range is None:
+		# Default, no parameter range provided
+		index, = np.where(pdf_orig_y > 0.0)
+		xrange = [pdf_orig_x[index].min(),pdf_orig_x[index].max()]
+	else:
+		if parameter_range[0] >= parameter_range[1]:
+			raise ValueError('User-defined parameter range must be [low, high], low < high')
+		xrange = parameter_range
+
+	# Set up a cubic spline interpolator
+	interprior = interp1d(pdf_orig_x,pdf_orig_y,\
+						  kind='cubic',bounds_error=False,fill_value=0.0,assume_sorted=True)
+
+	# ngrid point sampled prior
+	pdf_x = xrange[0] + np.arange(ngrid)*(xrange[1]-xrange[0])/(ngrid-1)
+	pdf_y = interprior(pdf_x) # interpolate the distribution
+
+
+	if Normalize:
+		norm = trapz(pdf_y,pdf_x)
+		pdf_y = pdf_y/norm  #  Normalise the prior distribution to integrate to unity over its range
+		
+	return np.stack([pdf_x,pdf_y])
 
 # ***********************************************************************************************
+
 class PriorDistribution:
 	""" This class handles a grid that specifies a prior distribution for use with FortesFit routines
 
@@ -40,9 +90,7 @@ class PriorDistribution:
 			Normalize: normalise the PDF to integrate to unity.
 													
 		"""
-	
-		ngrid = 1001
-			
+				
 		if np.size(prior_grid) == 1:
 			# Single value for fixed parameter
 			self.fixed = True
@@ -55,38 +103,10 @@ class PriorDistribution:
 				# this is the wrong shape
 				raise TypeError('Input array has the wrong shape')
 
-			# Sort the prior grid low to high in the parameter
-			sortindex = np.argsort(prior_grid[0,:])
-			prior_orig_x = prior_grid[0,sortindex]
-			prior_orig_y = prior_grid[1,sortindex]
-
-			# set all points with very low probability (< 1e-6 of the peak) to 0.0
-			# SciPy RVS based distributions will already be forced to this range
-			index, = np.where(prior_orig_y < 1e-6*prior_orig_y.max())
-			prior_orig_y[index] = 0.0
-
-			if parameter_range is None:
-				# Default, no parameter range provided
-				index, = np.where(prior_orig_y > 0.0)
-				xrange = [prior_orig_x[index].min(),prior_orig_x[index].max()]
-			else:
-				if parameter_range[0] >= parameter_range[1]:
-					raise ValueError('User-defined parameter range must be [low, high], low < high')
-				xrange = parameter_range
-
-			# Set up a cubic spline interpolator
-			interprior = interp1d(prior_orig_x,prior_orig_y,\
-								  kind='cubic',bounds_error=False,fill_value=0.0,assume_sorted=True)
-
-			# ngrid point sampled prior
-			prior_x = xrange[0] + np.arange(ngrid)*(xrange[1]-xrange[0])/(ngrid-1)
-			prior_y = interprior(prior_x) # interpolate the distribution
-
-
-			if Normalize:
-				norm = trapz(prior_y,prior_x)
-				prior_y = prior_y/norm  #  Normalise the prior distribution to integrate to unity over its range
-				
+			prior_new = process_PDF(prior_grid,parameter_range=parameter_range,Normalize=Normalize)
+			prior_x = prior_new[0,:]
+			prior_y = prior_new[1,:]
+							
 			self.fixed = False
 			self.characteristic = np.sum(prior_x*prior_y)/np.sum(prior_y)
 			self.prior_grid     = np.stack((prior_x,prior_y),axis=0)
@@ -491,7 +511,7 @@ class CollectModel:
 						offset = dep_prior.characteristic - np.median(model.dependencies[dependency_name])
 
 						# Update the scale parameter prior distribution to reflect the dependency prior
-						# The dependency grid is calculated at the value of the default value of the scale
+						# The dependency grid is calculated at the default value of the scale
 						#   parameter. Therefore, the scale parameter prior due to the dependency has the
 						#   same form as the dependency prior, but with a characteristic value that is the
 						#   default scale parameter value + the offset mentioned above.
