@@ -63,6 +63,9 @@ def process_PDF(pdf_grid,parameter_range=None,Normalize=True):
 	pdf_x = xrange[0] + np.arange(ngrid)*(xrange[1]-xrange[0])/(ngrid-1)
 	pdf_y = interprior(pdf_x) # interpolate the distribution
 
+	# If the interpolation leads to values below values below zero, set them to zero.
+	# A PDF is positive definite
+	pdf_y[pdf_y < 0.0] = 0.0
 
 	if Normalize:
 		norm = trapz(pdf_y,pdf_x)
