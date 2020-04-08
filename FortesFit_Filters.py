@@ -73,16 +73,20 @@ class FortesFit_Filter:
 		
 		ApplyFilter = np.interp(WaveLength, self.wavelength, self.throughput, left=0.0, right=0.0)
 		index, = np.where(ApplyFilter > 0.0) # Range of wavelengths over which the filter is non-zero
-		intslice = slice(index.min(),index.max())
 		
-		if (self.format == 'energy'):
-			FilterFlux = integrate.trapz(ApplyFilter[intslice]*FluxLam[intslice],WaveLength[intslice])
-			FilterNorm = integrate.trapz(ApplyFilter[intslice]*ZeroPoint[intslice],WaveLength[intslice])
+		if len(index) == 0:
+			return 0.0
 		else:
-			FilterFlux = integrate.trapz(ApplyFilter[intslice]*WaveLength[intslice]*FluxLam[intslice],WaveLength[intslice])
-			FilterNorm = integrate.trapz(ApplyFilter[intslice]*WaveLength[intslice]*ZeroPoint[intslice],WaveLength[intslice])
+			intslice = slice(index.min(),index.max())
+			
+			if (self.format == 'energy'):
+				FilterFlux = integrate.trapz(ApplyFilter[intslice]*FluxLam[intslice],WaveLength[intslice])
+				FilterNorm = integrate.trapz(ApplyFilter[intslice]*ZeroPoint[intslice],WaveLength[intslice])
+			else:
+				FilterFlux = integrate.trapz(ApplyFilter[intslice]*WaveLength[intslice]*FluxLam[intslice],WaveLength[intslice])
+				FilterNorm = integrate.trapz(ApplyFilter[intslice]*WaveLength[intslice]*ZeroPoint[intslice],WaveLength[intslice])
 		
-		return FilterFlux/FilterNorm
+			return FilterFlux/FilterNorm
 
 
 # ***********************************************************************************************
