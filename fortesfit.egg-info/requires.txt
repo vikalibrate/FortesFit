@@ -1,0 +1,7 @@
+numpy
+scipy
+matplotlib
+astropy
+emcee
+h5py
+corner
