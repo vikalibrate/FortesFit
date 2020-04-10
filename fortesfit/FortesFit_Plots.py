@@ -288,7 +288,7 @@ def	PlotModelSEDs(FortesFit_OutFile, wave_range = [1e-1,1e3], BurnIn=10000, PDF_
 	plt.close('all') # Delete all existing plots
 
 	sedfig = plt.figure()
-	ax = sedfig.add_axes([0.12,0.12,0.83,0.8])
+	ax1 = sedfig.add_axes([0.15,0.12,0.8,0.65])
 
 	# Load a color map and assign colors to all models using a certain colormap
 	plotnorm = Normalize(vmin=0,vmax=Nmodels-1)
@@ -316,9 +316,6 @@ def	PlotModelSEDs(FortesFit_OutFile, wave_range = [1e-1,1e3], BurnIn=10000, PDF_
 				if uparam in paramdict_varying:
 					paramdict_plot[imodel][param] = paramdict_varying[uparam]
 			sed = model.get_pivot_sed(paramdict_plot[imodel],Redshift)
-			# Special treatment of the Slone12 model, where the model photometry has been boosted by 1 dex.
-# 			if modelid == 17:
-# 				sed['observed_flux'] *= 0.1
 			index, = np.where(sed['observed_flux'] > 0.0) # Only interpolate over valid parts of the model SED
 			tempflux = np.interp(ObsWave,np.log10(sed['observed_wavelength'][index]),np.log10(sed['observed_flux'][index]),\
 								 left=-np.inf,right=-np.inf) + ObsWave	
@@ -334,18 +331,18 @@ def	PlotModelSEDs(FortesFit_OutFile, wave_range = [1e-1,1e3], BurnIn=10000, PDF_
 	for imodel in range(Nmodels):
 		index, = np.where(sample_seds[0,:,imodel] != 0.0) # get range of sample data from first model SED in set
 		scatter = np.percentile(sample_seds[:,index,imodel],[16,50,84],axis=0,interpolation='nearest')
-		plt.fill_between(10**(ObsWave[index]),scatter[0,:],scatter[2,:],\
+		ax1.fill_between(10**(ObsWave[index]),scatter[0,:],scatter[2,:],\
 						 color=plotcols.to_rgba(imodel),alpha=0.2,lw=1)
-		plt.plot(10**(ObsWave[index]),scatter[1,:],color=plotcols.to_rgba(imodel),lw=2)
+		ax1.plot(10**(ObsWave[index]),scatter[1,:],color=plotcols.to_rgba(imodel),lw=2)
 		BestFitFlux[index] += scatter[1,:]
 
 	# Plot the best-fit SED as a black thick line
-	plt.plot(10**(ObsWave),BestFitFlux,'k',lw=2)
+	ax1.plot(10**(ObsWave),BestFitFlux,'k',lw=2)
 
 	modelFluxes = np.zeros(len(Filters),dtype='f8')
 	for ifilt in range(len(FilterIDs)):
 		modelFluxes[ifilt] = np.median(sample_photometry[:,ifilt])
-	plt.plot(FilterWave,modelFluxes,color='red',lw=0,marker='o',fillstyle='none')
+	ax1.plot(FilterWave,modelFluxes,color='red',lw=0,marker='o',fillstyle='none')
 
 	# Use the points with valid photometry to determine the plotting range
 	index, = np.where(Fluxes > 0.0)
@@ -353,31 +350,33 @@ def	PlotModelSEDs(FortesFit_OutFile, wave_range = [1e-1,1e3], BurnIn=10000, PDF_
 	limitfluxes = Fluxes[index]*fluxconv
 	axrange = [0.8*FilterWave.min(),1.2*FilterWave.max(),\
 			   0.1*limitfluxes.min(),10.0*limitfluxes.max()]
-	plt.axis(axrange)
+	ax1.axis(axrange)
 	
 	# Plot the photometric points
 	index, = np.where((Fluxes > 0.0) & (FluxErrors > 0.0))
 	fluxconv = FilterWave[index]
 	plotfluxes = Fluxes[index]*fluxconv 
 	eplotfluxes = FluxErrors[index]*fluxconv 
-	plt.errorbar(FilterWave[index],plotfluxes,eplotfluxes,fmt='ko',ecolor='k')
+	ax1.errorbar(FilterWave[index],plotfluxes,eplotfluxes,fmt='ko',ecolor='k')
 	index, = np.where((Fluxes > 0.0) & (FluxErrors < 0.0))
 	fluxconv = FilterWave[index]
 	for i in range(len(index)):
-		plt.annotate("", xy=(FilterWave[index[i]],0.5*Fluxes[index[i]]*fluxconv[i]),\
+		ax1.annotate("", xy=(FilterWave[index[i]],0.5*Fluxes[index[i]]*fluxconv[i]),\
 					 xytext=(FilterWave[index[i]],Fluxes[index[i]]*fluxconv[i]),arrowprops=dict(arrowstyle="->"))
-#		plt.arrow(FilterWave[index[i]],Fluxes[index[i]]*fluxconv[i],0.0,-0.5*Fluxes[index[i]]*fluxconv[i],\
-#				  fc="k", ec="k", width=0.005*FilterWave[index[i]],\
-#				  head_width=0.1*FilterWave[index[i]], head_length=0.3*FilterWave[index[i]])
-	#plt.plot(FilterWave[index],Fluxes[index]*fluxconv,'kv',markersize=10)
 
-	plt.loglog()
-	plt.xlabel(r'Observed Wavelength ($\mu$m)',size='x-large')
-	plt.ylabel(r'$\nu$F$_{\nu}$ (erg s$^{-1}$ cm$^{-2}$)',size='x-large')
-	plt.title(ObjectName,size='xx-large')
+	ax1.loglog()
+	ax1.set_xlabel(r'Observed Wavelength ($\mu$m)',size='x-large')
+	ax1.set_ylabel(r'$\nu$F$_{\nu}$ (erg s$^{-1}$ cm$^{-2}$)',size='x-large')
 
-	ax.tick_params(axis='both',labelsize='large')
-	ax.set_xlim(wave_range[0],wave_range[1])
+	ax1.tick_params(axis='both',labelsize='large')
+	ax1.set_xlim(wave_range[0],wave_range[1])
+
+	ax2 = ax1.twiny()  # set up another axes to plot the rest-frame wavelength
+	ax2.semilogx()
+	ax2.set_xlim(wave_range[0]/(1.0+Redshift),wave_range[1]/(1.0+Redshift))
+	ax2.set_xlabel(r'Rest Wavelength ($\mu$m)',size='x-large')
+
+	ax1.set_title(ObjectName,size='xx-large')
 
 	if len(PDF_File) > 0:
 		output.savefig(sedfig)
@@ -415,7 +414,7 @@ def	PlotPosteriors(FortesFit_OutFile, BurnIn=10000, old=False):
 		index, = np.where(fitresult.fit_parameter_names == 'Redshift')
 		plotrange = fitresult.percentiles([1,99])['Redshift']
 		histogram = ax.hist(fitresult.all_samples[:,index[0]],range=plotrange,bins=30,\
-							histtype='stepfilled',color='k',alpha=0.7,normed=True)
+							histtype='stepfilled',color='k',alpha=0.7,density=True)
 		ax.set_xlabel('Redshift')
 		ax.axis([plotrange[0],plotrange[1],0,1])
 		ax.tick_params(axis='y',left=False)		
@@ -466,7 +465,7 @@ def	PlotPosteriors(FortesFit_OutFile, BurnIn=10000, old=False):
 				plotrange = [np.min(prior[0,:]),np.max(prior[0,:])]
 #				plotrange = fitresult.percentiles([0.1,99.1])[uparam]
 				histogram = ax.hist(fitresult.all_samples[:,index[0]],range=plotrange,bins=30,\
-				   					 histtype='stepfilled',color='k',alpha=0.7,normed=True)
+				   					 histtype='stepfilled',color='k',alpha=0.7,density=True)
 
 				ax.set_xlim(left=plotrange[0],right=plotrange[1])
 				# Reasonable ticks (4 per parameter)
