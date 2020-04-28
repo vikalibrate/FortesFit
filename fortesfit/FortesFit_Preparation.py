@@ -600,6 +600,11 @@ def prepare_output_file(datacollection,modelcollection,fitengine,OutputPath=None
 		Returns the file reference of an open HDF5 file. The file should be closed after use.
 
 	"""
+	if fitengine == 'multinest':
+		# Create a multinest output directory if none exists
+		if not os.path.isdir('multinest_output/'):
+			raise FileNotFoundError('Running Multinest requires a local working directory called "multinest_output/"')
+
 	if OutputPath is None:
 		# Get the current directory path if no user supplied one
 		OutputPath = os.getcwd()
@@ -663,16 +668,6 @@ def prepare_output_file(datacollection,modelcollection,fitengine,OutputPath=None
 	note = 'Fixed parameters not included in chains.'
 	chain.attrs.create("Note",note,dtype=np.dtype('S{0:3d}'.format(len(note))))
 	chain.create_dataset('Varying_parameters',data=np.core.defchararray.encode(varying_parameters))
-
-	if fitengine == 'multinest':
-		# Create a multinest output directory if none exists
-		if not os.path.isdir('multinest_output/'):
-			os.mkdir('multinest_output/')
-		else:
-			# Clear the temporary files written by multinest
-			mnfiles = glob.glob('multinest_output/*')
-			for file in mnfiles:
-				os.remove(file)
 
 	return FitFile
 
