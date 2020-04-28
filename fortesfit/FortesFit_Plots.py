@@ -288,7 +288,7 @@ def	PlotModelSEDs(FortesFit_OutFile, wave_range = [1e-1,1e3], BurnIn=10000, PDF_
 	plt.close('all') # Delete all existing plots
 
 	sedfig = plt.figure()
-	ax1 = sedfig.add_axes([0.15,0.12,0.8,0.65])
+	ax1 = sedfig.add_axes([0.15,0.12,0.8,0.70])
 
 	# Load a color map and assign colors to all models using a certain colormap
 	plotnorm = Normalize(vmin=0,vmax=Nmodels-1)

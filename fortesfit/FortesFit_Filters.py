@@ -58,9 +58,9 @@ class FortesFit_Filter:
 		""" Apply the filter to the supplied SED
 
 		Uses 1D linear interpolation
-		sed is a dictionary with keys (wavelength, flux, zeropoint) in units of (microns, /micron, /micron), 
-		individually listlike. zeropoint is optional - it is integrated over to normalise the 
-		filter-equivalent flux. If not provided, the zeropoint is assumed to be flat
+		sed is a dictionary with keys (wavelength, flux) in units of (microns, /micron), individually listlike
+		sed may contain a third key called zeropoint in the same units as flux, listlike. This is integrated
+		over to normalise the filter-equivalent flux. If not provided, the zeropoint is assumed to be flat
 		in wavelength with a value = 3.63e-5 erg/s/cm^2/micron = 0 STMAG
 		
 		"""
@@ -73,19 +73,20 @@ class FortesFit_Filter:
 		
 		ApplyFilter = np.interp(WaveLength, self.wavelength, self.throughput, left=0.0, right=0.0)
 		index, = np.where(ApplyFilter > 0.0) # Range of wavelengths over which the filter is non-zero
-		if len(index) == 0:
-			# If the template SED has no data in this filter, return flux = 0.0
-			return 0.0
-
-		intslice = slice(index.min(),index.max())
-		if (self.format == 'energy'):
-			FilterFlux = integrate.trapz(ApplyFilter[intslice]*FluxLam[intslice],WaveLength[intslice])
-			FilterNorm = integrate.trapz(ApplyFilter[intslice]*ZeroPoint[intslice],WaveLength[intslice])
-		else:
-			FilterFlux = integrate.trapz(ApplyFilter[intslice]*WaveLength[intslice]*FluxLam[intslice],WaveLength[intslice])
-			FilterNorm = integrate.trapz(ApplyFilter[intslice]*WaveLength[intslice]*ZeroPoint[intslice],WaveLength[intslice])
 		
-		return FilterFlux/FilterNorm
+		if len(index) == 0:
+			return 0.0
+		else:
+			intslice = slice(index.min(),index.max())
+			
+			if (self.format == 'energy'):
+				FilterFlux = integrate.trapz(ApplyFilter[intslice]*FluxLam[intslice],WaveLength[intslice])
+				FilterNorm = integrate.trapz(ApplyFilter[intslice]*ZeroPoint[intslice],WaveLength[intslice])
+			else:
+				FilterFlux = integrate.trapz(ApplyFilter[intslice]*WaveLength[intslice]*FluxLam[intslice],WaveLength[intslice])
+				FilterNorm = integrate.trapz(ApplyFilter[intslice]*WaveLength[intslice]*ZeroPoint[intslice],WaveLength[intslice])
+		
+			return FilterFlux/FilterNorm
 
 
 # ***********************************************************************************************

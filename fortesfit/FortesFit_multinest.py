@@ -1,4 +1,6 @@
 import sys
+import os
+import glob
 
 import numpy as np
 
@@ -17,7 +19,8 @@ from fortesfit import FortesFit_Fitting
 # ***********************************************************************************************
 
 def	FortesFit_multinest(varying_indices, datacollection, modelcollection, 
-						verbose=False, evidence_tolerance=0.5, sampling_efficiency=0.8):
+						verbose=False, evidence_tolerance=0.5, sampling_efficiency=0.8,
+						outputfiles_basename='fortesfit_'):
 	""" The upper level function call to fit one object with PyMultinest		
 		
 		varying_indices: A list of indices to the parameter_reference for the varying parameters.
@@ -63,10 +66,24 @@ def	FortesFit_multinest(varying_indices, datacollection, modelcollection,
 		return FortesFit_Fitting.Bayesian_probability(varying_parameters,datacollection,modelcollection,varying_indices)
 
 
+	outputfiles_basename = 'multinest_output/'+outputfiles_basename # Include the MultiNest working directory
 	
 	# Run Pymultinest with the functions defined above	
 	pymultinest.run(multinest_loglikelihood, multinest_prior, len(varying_indices), 
-					outputfiles_basename=u'multinest_output/fortesfit_',
+					outputfiles_basename=outputfiles_basename,
 					verbose=verbose,evidence_tolerance=evidence_tolerance)
 	
-	return pymultinest.Analyzer(len(varying_indices),outputfiles_basename=u'multinest_output/fortesfit_')
+	return pymultinest.Analyzer(len(varying_indices),outputfiles_basename=outputfiles_basename)
+
+# ***********************************************************************************************
+def	Multinest_cleanup(outputfiles_basename='fortesfit_'):
+	""" Cleans up the local Multinest temporary working directory.
+		Call when all processing from the directory is completed.
+	"""
+
+	outputfiles_basename = 'multinest_output/'+outputfiles_basename # Include the MultiNest working directory
+	mnfiles = glob.glob(outputfiles_basename+'*')
+	for file in mnfiles:
+		os.remove(file)
+	
+
