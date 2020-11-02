@@ -65,6 +65,11 @@ class FullModel:
 		else:
 			self.with_dependencies = False
 
+		# Read the valid wavelength range for the model
+		try:
+			self.wave_range = Model.attrs['ValidWavelengthRange']
+		except:
+			self.wave_range = np.array([0.01,1e4])  # To be compatible with early forms of model databases	
 
 		# Read the redshift pivot values
 		self.pivot_redshifts = Model.attrs['Pivot_Redshifts']
@@ -405,7 +410,7 @@ class FitModel:
 # ***********************************************************************************************
 
 def test_model_registration(read_module, parameters, scale_parameter_name, \
-				   redshift_array=FortesFit_Settings.PivotRedshifts,filterids=[]):
+				   redshift_array=FortesFit_Settings.PivotRedshifts,filterids=[],wave_range=[1e-2,1e4]):
 	""" Test the registration code for a model before actual registration 
 	
 	read_module: a string name for a module available either in the PYTHONPATH or the working
@@ -423,7 +428,9 @@ def test_model_registration(read_module, parameters, scale_parameter_name, \
 	redshift_array: An array of redshifts on which to evaluate the model. Default is the FortesFit Settings redshift array
 	filterids: array-like, sequence of FortesFit filter ids to register for the model. 
 			   	If zero-length (default), all filters in the database are added.
-				If the filter database is large, the default can be prohibitive in terms of processing time.			
+				If the filter database is large, the default can be prohibitive in terms of processing time.
+	wave_range: the range of wavelengths in microns over which the model is valid. Filters with wavelengths that do not cover
+				this range of wavelengths will have fluxes set to -inf.			
 
 	returns None
 		
@@ -481,9 +488,16 @@ def test_model_registration(read_module, parameters, scale_parameter_name, \
 			filter = FortesFit_Filters.FortesFit_Filter(filterid)
 			FilterList.append(filter)
 
-	# Initialise the wavelength array that is used for filter processing (from 100 Ang to 10mm) in log microns
-	ObsWave = -2.0 + np.arange(1001)*(6.0/1000.0)
+	# Initialise the wavelength array that is used for filter processing in log microns
+	ObsWave = np.log10(wave_range[0]) + np.arange(1001)*(np.log10(wave_range[1]/wave_range[0])/1000.0)
 
+	# Generate a wavelength array which is the sorted concatenation of wavelength arrays of all filters used
+# 	ObsWave = []
+# 	for ifilter in range(len(FilterList)):
+# 		for wavpoint in FilterList[ifilter].wavelength:
+# 			ObsWave.append(wavpoint)
+# 	ObsWave = np.array(np.log10(np.sort(ObsWave)))
+	
 	# Determine the number of model parameters and the number of pivot points per parameter
 	ShapeParamNames  = sorted(parameters.keys()) # Parameters in alphabetical order of their names
 	# Check to make sure that all the parameter name strings are < 20 characters
@@ -524,7 +538,7 @@ def test_model_registration(read_module, parameters, scale_parameter_name, \
 
 def register_model(read_module, parameters, scale_parameter_name, \
 				   description='None', \
-				   redshift_array=FortesFit_Settings.PivotRedshifts,filterids=[],\
+				   redshift_array=FortesFit_Settings.PivotRedshifts,filterids=[],wave_range=[1e-2,1e4],\
 				   silent=False):
 	""" Register a model for use by FORTES-FIT 
 	
@@ -552,6 +566,8 @@ def register_model(read_module, parameters, scale_parameter_name, \
 	filterids: array-like, sequence of FortesFit filter ids to register for the model. 
 			   	If zero-length (default), all filters in the database are added.
 				If the filter database is large, the default can be prohibitive in terms of processing time.			
+	wave_range: the range of wavelengths in microns over which the model is valid. Filters with wavelengths that do not cover
+				this range of wavelengths will have fluxes set to -inf.			
 	silent: If true, suppress interactive input and non-error messages. Not recommended unless the model 
 			has been thoroughly tested.
 
@@ -599,8 +615,8 @@ def register_model(read_module, parameters, scale_parameter_name, \
 			filter = FortesFit_Filters.FortesFit_Filter(filterid)
 			FilterList.append(filter)
 
-	# Initialise the wavelength array that is used for filter processing (from 100 Ang to 10mm) in log microns
-	ObsWave = -2.0 + np.arange(1001)*(6.0/1000.0)
+	# Initialise the wavelength array that is used for filter processing in log microns
+	ObsWave = np.log10(wave_range[0]) + np.arange(1001)*(np.log10(wave_range[1]/wave_range[0])/1000.0)
 
 	# Read existing models and create a list of model ID numbers
 	OldModelFiles = glob.glob(FortesFit_Settings.ModelPhotometryDirectory+'Model??')
@@ -668,6 +684,7 @@ def register_model(read_module, parameters, scale_parameter_name, \
 	ModelFile.attrs.create("ReadinFunction",read_module,dtype=np.dtype('S{0:3d}'.format(len(read_module))))
 	
 	# Populate a set of higher level attributes.
+	ModelFile.attrs.create("ValidWavelengthRange",wave_range,dtype='f4')
 	ModelFile.attrs.create("ScaleParameterName",scale_parameter_name,dtype='S20')
 	ModelFile.attrs.create("ScaleParameterValue",parameters[scale_parameter_name],dtype='f4')
 	# Names of all the shape parameters, the pivot values for all shape parameters. 
@@ -679,7 +696,7 @@ def register_model(read_module, parameters, scale_parameter_name, \
 	ModelFile.attrs.create("Pivot_Redshifts",redshift_array,dtype='f4')	
 
 	# HDF5 group for dependencies
-	zpiv = ModelFile.create_group('Dependencies')
+	zpiv = ModelFile.create_group('Dependencies') # Only using zpiv as a placeholder here. Used properly later.
 
 	# Initialise empty arrays that will store the photometry and temporary dictionaries	
 	
@@ -826,8 +843,9 @@ def add_filter_to_model(ModelID, FilterIDs):
 	param_subset = dict.fromkeys(ShapeParamNames)
 	param_subset.update({Model.scale_parameter_name:Model.scale_parameter_value}) # Include the scale parameter
 
-	# Initialise the wavelength array that is used for filter processing (from 100 Ang to 10mm) in log microns
-	ObsWave = -2.0 + np.arange(1001)*(6.0/1000.0)
+	# Initialise the wavelength array that is used for filter processing in log microns
+	wave_range = Model.wave_range
+	ObsWave = np.log10(wave_range[0]) + np.arange(1001)*(np.log10(wave_range[1]/wave_range[0])/1000.0)
 
 	# For each pivot redshift access the existing group under the name z??, where ?? is the running counter of the redshift
 	#    array in dd form. To this group, add one dataset for each new filter. The datasets are multi-dimensional
@@ -840,13 +858,16 @@ def add_filter_to_model(ModelID, FilterIDs):
 		zpiv = ModelFile[GroupName]
 	
 				
-		for iparam in range(np.prod(ShapeParamPoints)):
-			# Loop over all shape parameters
-			# unravel indices to access the pivot points of each parameter
-			paramgen = np.unravel_index(iparam,ShapeParamPoints,order='C')
-			# fill the temporary parameter dictionary for the call to the read_function
-			for i,key in enumerate(ShapeParamNames):
-				param_subset[key] = Model.shape_parameters[key][paramgen[i]]
+		for iparam in range(int(np.prod(ShapeParamPoints))):
+			# If there are shape parameters, loop over all of them
+			if len(ShapeParamNames) == 0:
+				paramgen = []
+			else:
+				# unravel indices to access the pivot points of each parameter
+				paramgen = np.unravel_index(iparam,ShapeParamPoints,order='C')
+				# fill the temporary parameter dictionary for the call to the read_function
+				for i,key in enumerate(ShapeParamNames):
+					param_subset[key] = Model.shape_parameters[key][paramgen[i]]
 			
 			# Call the readin function
 			sed = Model.get_pivot_sed(param_subset,Model.pivot_redshifts[iz])
@@ -866,16 +887,6 @@ def add_filter_to_model(ModelID, FilterIDs):
 				else:
 					modelphot[tuple(photindex)] = -np.inf
 
-# 			for ifilter in range(len(FilterList)):
-# 				# Loop over all filters
-# 				modelphotsingle = FilterList[ifilter].apply({'wavelength':10**ObsWave,'flux':10**ObsFlux})
-# 				# Catch cases of negative or badly formed values
-# 				if (modelphotsingle > 0.0) and (np.isfinite(modelphotsingle)):
-# 					modelphot[(paramgen,ifilter)] = np.log10(modelphotsingle)
-# 				else:
-# 					modelphot[(paramgen,ifilter)] = -np.inf
-
-		
 		# Write out the subcubes for each filter as a separate dataset in this group. FilterID is the dataset name
 		SubCubes = np.split(modelphot,len(FilterList),axis=modelphot.ndim-1) # list of cubes split into different filters
 		for ifilter in range(len(FilterList)):
@@ -1090,7 +1101,7 @@ def delete_model(ModelID):
 	# Remove the directory tree corresponding to the Model
 	shutil.rmtree(ModelDirectory)	
 		
-	print('Model{0:2d} has been deleted'.format(ModelID))
+	print('Model {0:2d} has been deleted'.format(ModelID))
 	
 	# Update the model summary table
 	summarize_models()
