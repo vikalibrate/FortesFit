@@ -269,7 +269,10 @@ def	PlotModelSEDs(FortesFit_OutFile, wave_range = [1e-1,1e3], BurnIn=10000, PDF_
 
 	Fluxes     = fitresult.fit_fluxes
 	FluxErrors = fitresult.fit_fluxerrors
-
+        #print(Filters)
+        #print(FilterWave)
+        #print(Fluxes)
+        
 	ModelIDs = fitresult.fit_modelids
 	Models = []
 	for modelid in ModelIDs:
