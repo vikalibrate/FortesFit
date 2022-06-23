@@ -19,7 +19,7 @@ from fortesfit import FortesFit_Fitting
 # ***********************************************************************************************
 
 def	FortesFit_multinest(varying_indices, datacollection, modelcollection, 
-						verbose=False, evidence_tolerance=0.5, sampling_efficiency=0.8,
+						verbose=False, evidence_tolerance=1e-3, sampling_efficiency=0.3,
 						outputfiles_basename='fortesfit_'):
 	""" The upper level function call to fit one object with PyMultinest		
 		
@@ -71,7 +71,7 @@ def	FortesFit_multinest(varying_indices, datacollection, modelcollection,
 	# Run Pymultinest with the functions defined above	
 	pymultinest.run(multinest_loglikelihood, multinest_prior, len(varying_indices), 
 					outputfiles_basename=outputfiles_basename,
-					verbose=verbose,evidence_tolerance=evidence_tolerance)
+					verbose=verbose,evidence_tolerance=evidence_tolerance, n_live_points = 800)
 	
 	return pymultinest.Analyzer(len(varying_indices),outputfiles_basename=outputfiles_basename)
 

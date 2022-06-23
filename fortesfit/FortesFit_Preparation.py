@@ -331,7 +331,7 @@ class CollectData:
 		plotflux = np.log10(fluxes[index]*wavelengths[index])
 		eplotflux_hi = np.log10((fluxes[index]+efluxes[index])*wavelengths[index]) - plotflux
 		eplotflux_lo = plotflux - np.log10((fluxes[index]-efluxes[index])*wavelengths[index])
-		ax1.errorbar(wavelengths[index],plotflux,yerr=[eplotflux_lo,eplotflux_hi],color='black',ecolor='black',fmt='ko')
+		ax1.errorbar(wavelengths[index],plotflux,yerr=[eplotflux_lo,eplotflux_hi],color='black',ecolor='black',fmt='o')
 		axrange = ax1.axis()
 
 		index1, = np.where(weights[index] != 1.0)
@@ -351,7 +351,7 @@ class CollectData:
 		ax1.set_xlabel(r'Observed Wavelength ($\mu$m)')
 		ax1.set_ylabel(r'log $\nu$F$_{\nu}$ (erg s$^{-1}$ cm$^{-2}$)')
 		
-		figure.show
+		figure.show()
 		
 		return figure
 		
@@ -573,7 +573,12 @@ class CollectModel:
 		if datacollection.redshift.fixed:
 			varyflag = False
 		else: varyflag = True
-		parameter_reference.append(('Redshift',None,datacollection.redshift,varyflag))
+                # this is old version
+                # line 660, it asks if imodel is == -1 to know if it is the redshift parameter. This "model"
+                # variable corresponds to the None value in line 576. By changing None to -1, it works.
+		#parameter_reference.append(('Redshift',None,datacollection.redshift,varyflag))
+                # new implementation
+		parameter_reference.append(('Redshift',-1,datacollection.redshift,varyflag))
 		for imodel in range(len(Models)):
 			for param in sorted(PriorDists[imodel].keys()):
 				if PriorDists[imodel][param].fixed:
