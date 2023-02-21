@@ -245,5 +245,18 @@ def summarize_filters():
 	summary_table.sort('pivot wavelength')
 	summary_table.write(FortesFit_Settings.FilterDirectory+'FortesFit_filters_summary.ascii',
 						format='ascii.fixed_width_two_line',overwrite=True)
-	
-	
+
+# ***********************************************************************************************
+
+def delete_filter(filterID):
+	'''
+	Delete a filter and update the filter list.
+
+	FilterID: int, Fortes filter ID
+	'''
+	filter_filename = f'{FortesFit_Settings.FilterDirectory}{filterID}.fortesfilter.xml'
+	try:
+		os.remove(filter_filename)
+		summarize_filters()
+	except:
+		raise ValueError(f'Filter not found. Make sure you have setup the environment variable FORTESFITPATH and the filter ID ({filterID}) is correct.')
