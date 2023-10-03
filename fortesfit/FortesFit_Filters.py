@@ -250,9 +250,9 @@ def summarize_filters():
 
 def delete_filter(filterID):
 	'''
-	Delete a filter and update the filter list.
+	Delete a filter and update the filter list (FortesFit_filters_summary.ascii)
 
-	FilterID: int, Fortes filter ID
+	filterID: int, Fortes filter ID
 	'''
 	filter_filename = f'{FortesFit_Settings.FilterDirectory}{filterID}.fortesfilter.xml'
 	try:

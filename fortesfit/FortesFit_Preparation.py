@@ -331,7 +331,7 @@ class CollectData:
 		plotflux = np.log10(fluxes[index]*wavelengths[index])
 		eplotflux_hi = np.log10((fluxes[index]+efluxes[index])*wavelengths[index]) - plotflux
 		eplotflux_lo = plotflux - np.log10((fluxes[index]-efluxes[index])*wavelengths[index])
-		ax1.errorbar(wavelengths[index],plotflux,yerr=[eplotflux_lo,eplotflux_hi],color='black',ecolor='black',fmt='ko')
+		ax1.errorbar(wavelengths[index],plotflux,yerr=[eplotflux_lo,eplotflux_hi],color='black',ecolor='black',fmt='o')
 		axrange = ax1.axis()
 
 		index1, = np.where(weights[index] != 1.0)
@@ -362,7 +362,7 @@ class CollectModel:
 		FortesFit.
 	"""
 	
-	def __init__(self,modellist,priordists,datacollection):
+	def __init__(self,modellist,priordists,datacollection,scaled_models,filter_scaling):
 		""" Initialise the FortesFit model representation for a user-provided object
 			
 			modellist: list-like, the FortesFit ids of models in arbitrary order
@@ -399,8 +399,11 @@ class CollectModel:
 
 		for imodel in range(len(modellist)):
 
-			# Read in a model to a FortesFit FitModel instance	
-			model = FitModel(modellist[imodel],redshift_range,filterids)
+			# Read in a model to a FortesFit FitModel instance
+			if modellist[imodel] in scaled_models:
+				model = FitModel(modellist[imodel],redshift_range,filterids,filter_scaling=filter_scaling)
+			else:
+				model = FitModel(modellist[imodel],redshift_range,filterids,filter_scaling=None)
 			priordist = priordists[imodel]
 			
 			# Process the prior distributions for each parameter and save
@@ -416,7 +419,7 @@ class CollectModel:
 
 			prior = priordist[parameter_name]
 			if np.size(prior) == 1:
-				if type(prior).__name__ == 'rv_frozen':
+				if type(prior).__name__ == 'rv_continuous_frozen':
 					# A frozen Scipy rvs_continuous instance. Will raise its own exception if it isn't properly set.
 					# Consider a range where the CDF goes from 1e-6 to 1 - 1e-6
 					xrange = [prior.ppf(1e-6),prior.ppf(1.0-1e-6)]

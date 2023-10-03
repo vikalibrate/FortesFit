@@ -193,16 +193,20 @@ class FitModel:
 	"""
 	
 	
-	def __init__(self,ModelID,redshift,FilterIDs):
+	def __init__(self,ModelID,redshift,FilterIDs,filter_scaling=None):
 		""" Read in the FORTES-FIT version of the SED model for a given model ID, redshift, set of filters
 			
 			ModelID: are unique 2 digit positive integer that identifies the model	 
 			         The model must be registered with FORTES-FIT, or this step will exit throwing an exception.
 			redshift: Either a scalar redshift value or a two-element list-like with lower and upper redshifts in a range
 			FilterIDs: A list of filter IDs that will be read from the model database
+			filter_scaling: a dictionary with filter specific scaling constant identified by the filterID as key
 							
 		"""
 		
+		if filter_scaling is None:
+			filter_scaling = {}
+
 		self.modelid = ModelID
 		ModelDir = FortesFit_Settings.ModelPhotometryDirectory+'Model{0:2d}/'.format(ModelID)
 		ModelFile = ModelDir+'{0:2d}.fortesmodel.hdf5'.format(ModelID)
@@ -267,7 +271,14 @@ class FitModel:
 		self.model_photometry = {}
 		# Create a dictionary with keys = filterIDs and containing a list of photometry cubes for each self.redshifts
 		for FilterID in FilterIDs:
-			cubelist = [np.squeeze(Model['z{0:02d}/{1:6d}'.format(index,FilterID)][:]) for index in zindex]
+			if FilterID in filter_scaling:
+				cubelist = [np.squeeze(Model['z{0:02d}/{1:6d}'.format(index,FilterID)][:]) 
+				+ np.log10(filter_scaling[FilterID]) for index in zindex]
+			else:
+				# could have had this line outside if statement and scaled the entire thing only if needed. but that would have 
+				# reqiured making ```cubelist``` an array instead of list. idk if that would break something downstream.
+				cubelist = [np.squeeze(Model['z{0:02d}/{1:6d}'.format(index,FilterID)][:]) for index in zindex]
+
 			self.model_photometry.update({FilterID:cubelist})
 			
 		# Store a list of filterids
@@ -438,6 +449,7 @@ def test_model_registration(read_module, parameters, scale_parameter_name, \
 	
 	# Get unique filter ids, in case of duplicates
 	if (len(np.unique(filterids)) != len(filterids)):
+		# This will never run because the "filterids" coming to this function are already unique.
 		print('Possibly non-unique filter IDs specified.')
 		filterids = np.unique(filterids)
 
@@ -616,7 +628,8 @@ def register_model(read_module, parameters, scale_parameter_name, \
 			FilterList.append(filter)
 
 	# Initialise the wavelength array that is used for filter processing in log microns
-	ObsWave = np.log10(wave_range[0]) + np.arange(1001)*(np.log10(wave_range[1]/wave_range[0])/1000.0)
+	# ObsWave = np.log10(wave_range[0]) + np.arange(1001)*(np.log10(wave_range[1]/wave_range[0])/1000.0)
+	ObsWave = np.linspace(np.log10(wave_range[0]), np.log10(wave_range[1]), 1001) # cleaner way of doing the same
 
 	# Read existing models and create a list of model ID numbers
 	OldModelFiles = glob.glob(FortesFit_Settings.ModelPhotometryDirectory+'Model??')
@@ -624,7 +637,7 @@ def register_model(read_module, parameters, scale_parameter_name, \
 		if not silent: print('Warning: No existing models found! If this is not your first model, check settings.')
 	OldIDs = []
 	for OldFile in OldModelFiles:
-		OldIDs.append(np.int(os.path.basename(OldFile)[-2:]))
+		OldIDs.append(int(os.path.basename(OldFile)[-2:]))
 
 	# Assign a random and unique 2 digit number for the new model.
 	# This approach allows for a maximum of N=90 models, which should be sufficient.
@@ -723,7 +736,7 @@ def register_model(read_module, parameters, scale_parameter_name, \
 		zpiv = ModelFile.create_group(GroupName)
 	
 				
-		for iparam in range(int(np.prod(ShapeParamPoints))):
+		for iparam in range(int(np.prod(ShapeParamPoints))): # Product of empty list is 1
 			# If there are shape parameters, loop over all of them
 			if len(ShapeParamNames) == 0:
 				paramgen = []
@@ -1107,3 +1120,442 @@ def delete_model(ModelID):
 	summarize_models()
 
 
+# ================================================= Dev code ==================================================
+
+from multiprocessing import Pool, Process
+from functools import partial
+from tqdm import tqdm
+
+from ctypes import c_int
+from multiprocessing import Value, Lock
+
+def registration_progress_counter(total_points, model_ID):
+	'''
+	A simple function to add 1 to the counter that's keeping track of how many redshift points are already processed.
+	Reference: https://stackoverflow.com/questions/1233222/python-multiprocessing-easy-way-to-implement-a-simple-counter
+
+	Input:
+	----
+	total_points : (int) Total number of points
+	model_ID	 : (int) Model ID of the current model
+	All these inputs are used just to format a more informative print statement. The counter works without any of these arguments. 
+
+	Output:
+	----
+	Increment the counter by 1 and print the progress. Returns nothing.
+
+	'''
+	with counter_lock:
+		counter.value += 1
+	print(f'[Model{model_ID}] {counter.value}/{total_points} redshift points done.', end="\r")
+
+def process_single_z_point(iz, redshift_array, read_module, parameters, templates, FilterList, ShapeParamNames, 
+	ShapeParamPoints, ObsWave, param_subset, modelphot, NewModelDirectory, NewID):
+
+	'''
+	A function to evaluate and save the SED at a single redshift point, and a given set of filters.
+
+	Input:
+	----
+	iz				  : (int) Index of the redshift point in ```redshift_array```
+	redshift_array	  : (array) An array containing all the redshifts that the current model is to be evaluated at
+	read_module 	  : (str) name of the file containing ```readin()``` and ```readtemplates()``` functions (without .py)
+					  Note: ```readtemplates()``` is never called inside this function.
+	parameters		  : (dict) A dictionary containing a list of sorted shape parameters and the value of scale parameter.
+					  The keys are the parameter names as used in the ```readin()``` script.
+	templates 		  : (dict) Output of the ```readtemplates()``` function. 
+					  Typically, {'wavelength': list, 'seds': array, 'parameters': dict}
+	FilterList 		  : (list) List of FortesFit filter instances for all the filters used in this model
+	ShapeParamNames	  : (list) List of (strings) shape parameter names
+	ShapeParamPoints  : (list) List of number of pivot points for each parameter in the same order as ```ShapeParamNames```
+	ObsWave			  : (array) A 1-D array of wavelengths where the model is to be interpolated
+	param_subset	  : (dict) An empty dictionary of form {'sp1': None, 'sp2': None, ..., 'scaleparameter': value}
+	modelphot 		  : (array) An empty array of shape (Nsp1, Nsp2, ..., Nfilt)
+	NewModelDirectory : (str) Path to the given model directory
+
+	Output:
+	----
+	Save a single numpy array containing model photometry at the given redshift and for all the given filters. The shape of this
+	output array is the number of all shape parameters and the number of filters (Nsp1,Nsp1,...,Nfilt).
+	'''
+	
+	n_pivotPoints = int(np.prod(ShapeParamPoints))
+	total_z_points = len(redshift_array)
+	ReadModule = __import__(read_module) # Can not supply the ReadModule directly with partial (TypeError: cannot pickle 'module' object)
+	
+	for iparam in range(n_pivotPoints):
+		# If there are shape parameters, loop over all of them
+		if len(ShapeParamNames) == 0:
+			paramgen = []
+		else:
+			# unravel indices to access the pivot points of each parameter
+			paramgen = np.unravel_index(iparam, ShapeParamPoints, order='C')
+			# fill the temporary parameter dictionary for the call to the read_function
+			for i, key in enumerate(ShapeParamNames):
+				param_subset[key] = parameters[key][paramgen[i]]
+
+		# Call the readin function
+		sed = ReadModule.readin(param_subset, redshift_array[iz], templates=templates)
+		# Interpolate the model onto the default wavelength scale
+		ObsFlux = np.interp(ObsWave, np.log10(sed['observed_wavelength']), np.log10(sed['observed_flux']), left = -np.inf, 
+			right = -np.inf)
+		# Initialise an index list that will be used to access the modelphotometry array
+		photindex = list(paramgen)
+		photindex.append(0) # This is a placeholder index for the filter
+		for ifilter in range(len(FilterList)):
+			# Loop over all filters
+			photindex[-1] = ifilter # Replace the placeholder with the filter index
+			modelphotsingle = FilterList[ifilter].apply({'wavelength':10**ObsWave, 'flux':10**ObsFlux})
+			# Catch cases of negative or badly formed values
+			if (modelphotsingle > 0.0) and (np.isfinite(modelphotsingle)):
+				modelphot[tuple(photindex)] = np.log10(modelphotsingle)
+			else:
+				modelphot[tuple(photindex)] = -np.inf
+
+	# Write out the subcubes for each filter as a separate dataset in this group. FilterID is the dataset name
+	SubCubes = np.split(modelphot, len(FilterList), axis = modelphot.ndim-1) # list of cubes split into different filters
+	# Save the list of cubes in a numpy array in the <NewModelDirectory> folder
+	np.save(NewModelDirectory + 'z{0:02d}_temp.npy'.format(iz), SubCubes)
+	registration_progress_counter(total_z_points, NewID)
+
+def register_model_parallel(read_module, parameters, scale_parameter_name, description, filterids, n_processes, resume=False, 
+	redshift_array=None, wave_range=None, verbose=True):
+
+	'''
+	Register a model for use by FORTES-FIT 
+	
+	A model is a family of SEDs which are identified by a set of unique parameters. Models
+	can have one single scale parameter and any number of shape parameters.
+	
+	Combination models which could have more than one scale parameter (i.e., hybrid models)
+	must be broken down into independent submodels which are registered separately. This should
+	be generally valid for additive SED model libraries.
+	
+	Input:
+	----
+	read_module			: (str) a string name for a module available either in the PYTHONPATH or the working
+						  directory which contains a function called 'readin'. This
+						  accepts a value for each parameter in the form of a dictionary, a redshift, 
+						  and an optional templates keyword.
+						  It must return an SED consisting of a dictionary of matched arrays with keys
+						  'observed wavelength' (microns) and 'observed flux' (erg/s/cm^2/micron).
+						  The module can contain an optional function 'readtemplates' which can be called
+						  first to read a set of templates to save disk operations. The
+						  user must ensure that the templates are intelligible to the readin function.
+	parameters			: (dict) all model parameters, including the scale parameter normalisation value, as a dictionary
+	scale_parameter_name: (str) the name of the single unique scale parameter, string
+	description			: (str) a string description of the model for informational purposes, string
+	filterids			: (array) sequence of FortesFit filter ids to register for the model. 
+			   			  If zero-length (default), all filters in the database are added.
+						  If the filter database is large, the default can be prohibitive in terms of processing time.
+	n_processes			: (int) Number of parallel processes used for registration. A number > 1 here speeds up the registration process 
+						  by distributing different redshift points to different processes. For best results, this number should be 
+						  between 1 and the number of vailable cores on the user's machine.
+	resume				: (False or int) If False, register a new model. If ```int```, attempt to resume the incomplete registration of
+						  model ID = int. Will safely exit if the model is already fully registered.
+	redshift_array		: (array) An array of redshifts on which to evaluate the model. Default is the FortesFit Settings redshift array
+	wave_range			: (list) the range of wavelengths in microns over which the model is valid. Filters with wavelengths 
+						  that do not cover this range of wavelengths will have fluxes set to -inf. Default is 0.01 to 10,000 micron	
+	verbose				: (bool) If False, suppress interactive input and non-error messages. Not recommended unless the model 
+						  has been thoroughly tested.
+
+	Output:
+	----
+	returns the new model ID. Also creates a directory for the new model in 
+	
+	The data associated with the registered model, as well as a copy of the readin module, is stored
+	in a model specific directory within ModelPhotometryDirectory with the same name as the model ID.
+	'''
+
+	# Setup a global counter to keep track of how many redshift points are processed
+	# https://stackoverflow.com/questions/1233222/python-multiprocessing-easy-way-to-implement-a-simple-counter
+	global counter, counter_lock
+	counter = Value(c_int) # defaults to 0
+	counter_lock = Lock()
+
+	if not resume:
+		print("You have just initiated the registration for a new model.")
+		# If redshift array is not supplied then use redshift array defined in FortesFit settings. The default is 241 logspaced points
+		# between 0.001 and 10.0
+		if redshift_array is None:
+			redshift_array = FortesFit_Settings.PivotRedshifts
+			if verbose: print(f'Will register the model at {len(redshift_array)} redshift points.')
+
+		if wave_range is None:
+			wave_range = [1e-2, 1e4]
+			if verbose: print(f'This model will be valid in wavelength range: {wave_range} microns')
+
+		# =================== Basic validation ===================
+		# Check if read module is available
+		try:
+			ReadModule = __import__(read_module)
+		except ImportError:
+			print(f'Read module {read_module} not available. Aborting the registration process.')
+			return None
+
+		# The value of scale parameter must be supplied and must be a single number.
+		if scale_parameter_name not in parameters:
+			raise ValueError(f'The value of scale parameter {scale_parameter_name} must be specified. Aborting the registration process.')
+		
+		if not (isinstance(parameters[scale_parameter_name], int) or isinstance(parameters[scale_parameter_name], float)):
+			raise ValueError(f'Value of scale parameter {scale_parameter_name} must be float or int. Aborting the registration process.')
+
+		# Check the order of the parameters. These must be supplied strictly is ascending order to ensure that the
+		# interpolation routines used behave correctly
+		for param in parameters:
+			# Only shape parameters are multiply valued
+			if len(param) > 20:
+				raise ValueError(f'Parameter names should be <=20 characters ({param} is not). Aborting the registration process.')
+			if param != scale_parameter_name:
+				for ival in range(len(parameters[param])-1):
+					# !!!!!!!!!!!!!! IS SAME VALUE OKAY? !!!!!!!!!!!!!!!!
+					if (parameters[param][ival] > parameters[param][ival+1]):
+						raise ValueError(f'{param} is not supplied in ascending order. Aborting the registration process.')
+
+		if (len(filterids) == 0):
+			if verbose: print(f'No filter IDs supplied. Will register the model using all available filters.')
+			# No specific filterids provided. Use the full complement of FORTESFIT filters
+			FilterFileList = glob.glob(FortesFit_Settings.FilterDirectory+'*.fortesfilter.xml')
+			# Catch situation where there are no current FORTESFIT filters
+			if(len(FilterFileList) == 0):
+				print('No filters found. Register your first filter!')
+				raise ValueError('No filter files found')
+				return None
+
+			filterids = [int(os.path.basename(filterfile).split('.')[0]) for filterfile in FilterFileList]
+
+		# Get unique filter ids, in case of duplicates
+		if (len(np.unique(filterids)) != len(filterids)):
+			if verbose: print('Possibly non-unique filter IDs specified. Will make them unique and continue.')
+			filterids = np.unique(filterids)
+		# ========================================================
+
+		# ================== Parse parameters ====================
+		if len(parameters) == 1:
+			# If this is only a scaled model (no shape parameters), catch this case
+			ShapeParamNames  = []
+			ShapeParamPoints = []
+			if verbose: print('This model has no shape parameters')
+		else:
+			# Determine the number of model parameters and the number of pivot points per parameter
+			ShapeParamNames = sorted(parameters.keys()) # Parameters in alphabetical order of their names
+			ShapeParamNames.remove(scale_parameter_name) # Exclude the scale parameter
+			ShapeParamPoints = []
+			for param in ShapeParamNames:
+				ShapeParamPoints.append(len(parameters[param]))
+			
+		n_shapeParams = len(ShapeParamNames)
+		n_pivotPoints = int(np.prod(ShapeParamPoints))
+		if verbose: 
+			print(f'This model has {n_shapeParams} shape parameter(s), sampled at a total of {n_pivotPoints} pivot points')
+			ch = input('If this looks reasonable, continue by entering "y": ')
+			if (ch[0].lower() != 'y'):
+				print('User abort. Exitting without registering the model.')
+				sys.exit()
+			else:
+				print('Continuing the registration process')
+		# ========================================================
+
+		# =================== Setup model files ==================
+		# Read existing models and create a list of model ID numbers
+		OldModelFiles = glob.glob(FortesFit_Settings.ModelPhotometryDirectory+'Model??')
+		if(len(OldModelFiles) == 0):
+			if verbose: print('Warning: No existing models found! If this is not your first model, check settings.')
+		OldIDs = []
+		for OldFile in OldModelFiles:
+			OldIDs.append(int(os.path.basename(OldFile)[-2:]))
+
+		# Assign a random and unique 2 digit number for the new model.
+		# This approach allows for a maximum of N=90 models, which should be sufficient.
+		# When the number of models approaches N, this method of assignment becomes inefficient. 
+		NewIDChecked = False
+		while (not NewIDChecked):
+			NewID = np.random.randint(10, high=99 + 1)
+			if(NewID not in OldIDs):
+				NewIDChecked = True
+
+		# Create the destination directory for this new Model
+		NewModelDirectory = FortesFit_Settings.ModelPhotometryDirectory+'Model{0:2d}/'.format(NewID)
+		os.mkdir(NewModelDirectory)
+		
+		# Copy the read_module to the model directory and rename it using the model id
+		ModelReadFileName = NewModelDirectory+'readmodule_{0:2d}.py'.format(NewID)
+		shutil.copy(ReadModule.__file__ , ModelReadFileName)
+
+		# Create an HDF5 file for this model
+		ModelFileName = NewModelDirectory+'{0:2d}.fortesmodel.hdf5'.format(NewID)
+		ModelFile = h5py.File(ModelFileName, 'w')
+		ModelFile.attrs.create("Description", description, dtype=np.dtype('S{0:3d}'.format(len(description))))
+		ModelFile.attrs.create("ReadinFunction", read_module, dtype=np.dtype('S{0:3d}'.format(len(read_module))))
+		
+		# Populate a set of higher level attributes.
+		ModelFile.attrs.create("ValidWavelengthRange", wave_range, dtype='f4')
+		ModelFile.attrs.create("ScaleParameterName", scale_parameter_name, dtype='S20')
+		ModelFile.attrs.create("ScaleParameterValue", parameters[scale_parameter_name], dtype='f4')
+		ModelFile.attrs.create("FilterIDs", filterids, dtype='i4')
+		# Names of all the shape parameters, the pivot values for all shape parameters. 
+		ModelFile.attrs.create("ShapeParameterNames", np.array(ShapeParamNames), dtype='S20')
+		for param in ShapeParamNames:
+			ModelFile.attrs.create(param, parameters[param], dtype='f4')
+
+		# Pivot redshifts
+		ModelFile.attrs.create("Pivot_Redshifts", redshift_array, dtype='f4')	
+
+		# If the model has passed all the sanity checks then set this flag to true
+		# check this flag while loading an incomplete registration to skip all the checks
+		ModelFile.attrs.create("BasicValidation", True, dtype='bool')
+
+		# HDF5 group for dependencies
+		zpiv = ModelFile.create_group('Dependencies') # Only using zpiv as a placeholder here. Used properly later.
+
+		ModelFile.close()
+		# ========================================================
+
+	else:
+		NewID = resume
+
+		# redefine the different paths to register the model
+		NewModelDirectory = FortesFit_Settings.ModelPhotometryDirectory+'Model{0:2d}/'.format(NewID)
+		ModelReadFileName = NewModelDirectory+'readmodule_{0:2d}.py'.format(NewID)
+		ModelFileName = NewModelDirectory+'{0:2d}.fortesmodel.hdf5'.format(NewID)
+		# If the previously defined paths do not exists, it will return an error.
+		# Most likely due to a wrong ModelID.
+		if not (os.path.exists(NewModelDirectory) and os.path.exists(ModelReadFileName) and os.path.exists(ModelFileName)): 
+			print(f'Can not resume the registration because some files were missing')
+			print(f'Make sure the model directory is untouched from previous registration, and the FORTESFITPATH is defined correctly')
+			print(f'Consider registering the model from scratch if the issue still persists')
+			raise ValueError(f'Missing files or folders for model {NewID}')
+
+		print(f'Resuming the registration of model {NewID}')
+		print(f'Will ignore all the other user supplied attributes and read them from HDF5 file from previous registration instead')
+
+		parameters = {}
+
+		with h5py.File(ModelFileName, 'r') as ModelFile:
+			redshift_array = ModelFile.attrs['Pivot_Redshifts'].copy()
+
+			# If all the z?? groups are create in the HDF5 file, it means that the model is fully registered.
+			# It will exit the function.
+			if all(['z{0:02d}'.format(iz) in ModelFile.keys() for iz in range(len(redshift_array))]):
+				print('Model already fully registered. Exiting.')
+				return NewID
+
+			read_module = ModelFile.attrs['ReadinFunction'].copy().decode()
+			wave_range = ModelFile.attrs['ValidWavelengthRange'].copy()
+			
+			ShapeParamNames = np.array([name.decode() for name in ModelFile.attrs['ShapeParameterNames'].copy()])
+			ShapeParamPoints = []
+			for param in ShapeParamNames:
+				parameters[param] = ModelFile.attrs[param].copy()
+				ShapeParamPoints.append(len(parameters[param]))
+
+			filterids = ModelFile.attrs['FilterIDs'].copy()
+
+			scale_parameter_name = ModelFile.attrs['ScaleParameterName'].copy().decode()
+			scale_parameter_value = ModelFile.attrs['ScaleParameterValue'].copy()
+			parameters[scale_parameter_name] = scale_parameter_value
+
+			wave_range = ModelFile.attrs['ValidWavelengthRange'].copy()
+
+			try:
+				basic_validation = ModelFile.attrs["BasicValidation"].copy()
+				print("The loaded model has passed basic tests during the time of initial registration. Will skip further checks.")
+			except:
+				raise ValueError(f'Model {NewID} has not passed trial readin. Can not load from existing registration.')	
+
+		ReadModule = __import__(read_module)
+
+	# =================== Setup variables ====================
+	# Store all filters in the form of a list of filter class objects
+	FilterList = [] # Initialise the list of filters
+	for filterid in filterids:
+		cur_filter = FortesFit_Filters.FortesFit_Filter(filterid)
+		FilterList.append(cur_filter)
+
+	# If there is a readtemplates function in the readmodule, call it to get the templates
+	# to provide to the readin function. This can help speed up the read in process, and is necessary
+	# for some readmodules.
+	if 'readtemplates' in dir(ReadModule):
+		templates = ReadModule.readtemplates()
+	else:
+		templates = None
+
+	# Initialise the wavelength array that is used for filter processing in log microns
+	# ObsWave = np.log10(wave_range[0]) + np.arange(1001)*(np.log10(wave_range[1]/wave_range[0])/1000.0)
+	ObsWave = np.linspace(np.log10(wave_range[0]), np.log10(wave_range[1]), 1001) # cleaner way of doing the same
+	# ========================================================
+
+	# ===================== Trial readin =====================
+	# Do a trial readin and filter application for the model script with the first filter in the list. 
+	# If this fails, halt registration and return.
+	# A dictionary of the first entries of all parameters
+	testparams = {}
+	for param in ShapeParamNames:
+		testparams.update({param:parameters[param][0]})
+	testparams.update({scale_parameter_name:parameters[scale_parameter_name]})
+	# Call the readin function
+	sed = ReadModule.readin(testparams, redshift_array[0], templates=templates)
+	# Interpolate the model onto the default wavelength scale
+	ObsFlux = np.interp(ObsWave, np.log10(sed['observed_wavelength']), np.log10(sed['observed_flux']), left=-np.inf, right=-np.inf)
+	testmodelphotsingle = FilterList[0].apply({'wavelength':10**ObsWave,'flux':10**ObsFlux})
+	print(f'Trial readin passed for model {NewID}. You can proceed with registration of this model.')
+	# ========================================================
+
+	# ================= Actual SED evaluation ================
+	# Initialise empty arrays that will store the photometry and temporary dictionaries	
+	# This cube stores the photometry at pivot shape parameters and all filters.
+	# Its shape is the number of all shape parameters and the number of filters (Nsp1,Nsp1,...,Nfilt)
+	# Info: even though the photometry cube is stored separately for each filter in the HDF5 file, 
+	#       it is more efficient to evaluate all filters together for each parameter pivot combination.
+	#       Therefore, the temporary storage is a supercube of this shape.
+	tempparlist = ShapeParamPoints.copy()
+	tempparlist.append(len(FilterList))
+	modelphot = np.empty(tuple(tempparlist), dtype='f4')
+	# This dictionary is updated at each pivot point and is an argument for the readin functions
+	param_subset = dict.fromkeys(ShapeParamNames)
+	param_subset.update({scale_parameter_name:parameters[scale_parameter_name]}) # Include the scale parameter
+
+	index_not_done = [iz for iz in np.arange(len(redshift_array)) if not os.path.exists(NewModelDirectory + 'z{0:02d}_temp.npy'.format(iz))]
+
+	if n_processes > 1:
+		# creaates a pool of <n_processes> processes.
+		p = Pool(processes = n_processes)
+		# creates a functions that contains already all the necessary parameters to produces the data cubes.
+		# the function "partial" creates a new function "process_single_z_point" for which all parameters are registered.
+		function = partial(process_single_z_point, ShapeParamPoints = ShapeParamPoints, read_module = read_module, 
+			param_subset = param_subset, ObsWave = ObsWave, redshift_array = redshift_array, templates = templates, 
+			ShapeParamNames = ShapeParamNames, FilterList = FilterList, modelphot = modelphot, NewModelDirectory = NewModelDirectory, 
+			parameters = parameters, NewID = NewID)
+		# distribute the redshift indexes to the different processes
+		simu = p.map(function, index_not_done)
+		p.close()
+		p.join()
+	
+	# if a single core is used, the function "process_single_z_point" is run in a loop over all redshift indexes.
+	else:
+		for iz in index_not_done:
+			process_single_z_point(iz, ShapeParamPoints = ShapeParamPoints, read_module = read_module, param_subset = param_subset,
+				ObsWave = ObsWave, redshift_array = redshift_array, templates = templates, ShapeParamNames = ShapeParamNames,
+				FilterList = FilterList, modelphot = modelphot, NewModelDirectory = NewModelDirectory, parameters = parameters, 
+				NewID = NewID)
+
+	# =================== Save to HDF5 file ==================
+	# All the redshift points are evaluated at this point. Read and add them to HDF5 file, then delete individual numpy arrays.
+	ModelFile = h5py.File(ModelFileName, 'r+')
+	for iz in tqdm(range(len(redshift_array)), desc=f'Model{NewID}'):
+		# Name for the HDF5 group for this redshift
+		GroupName = 'z{0:02d}'.format(iz)
+		zpiv = ModelFile.create_group(GroupName)
+		# loads the corresponding subCube numpy array.
+		SubCubes = np.load(NewModelDirectory + 'z{0:02d}_temp.npy'.format(iz))
+		
+		for ifilter in range(len(FilterList)):
+			DatasetName = '{0:6d}'.format(FilterList[ifilter].filterid)	
+			zpiv.create_dataset(DatasetName, data=SubCubes[ifilter])
+
+		ModelFile.flush() # Flush the HDF5 file to disk
+		# removes the subcube numpy array once registered in the HDF5 file
+		os.remove(NewModelDirectory + 'z{0:02d}_temp.npy'.format(iz))
+	# ========================================================
+
+	return NewID
