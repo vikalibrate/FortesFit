@@ -331,7 +331,7 @@ class CollectData:
 		plotflux = np.log10(fluxes[index]*wavelengths[index])
 		eplotflux_hi = np.log10((fluxes[index]+efluxes[index])*wavelengths[index]) - plotflux
 		eplotflux_lo = plotflux - np.log10((fluxes[index]-efluxes[index])*wavelengths[index])
-		ax1.errorbar(wavelengths[index],plotflux,yerr=[eplotflux_lo,eplotflux_hi],color='black',ecolor='black',fmt='o')
+		ax1.errorbar(wavelengths[index],plotflux,yerr=[eplotflux_lo,eplotflux_hi],color='black',ecolor='black',fmt='ko')
 		axrange = ax1.axis()
 
 		index1, = np.where(weights[index] != 1.0)
@@ -445,7 +445,7 @@ class CollectModel:
 					# A prior has been provided by the user
 					prior = priordist[parameter_name]				
 					if np.size(prior) == 1:
-						if type(prior).__name__ == 'rv_frozen':
+						if type(prior).__name__ == 'rv_continuous_frozen':
 							# A frozen Scipy rvs_continuous instance. Will raise its own exception if it isn't properly set.
 							# Consider a range where the CDF goes from 1e-6 to 1 - 1e-6
 							xrange = [prior.ppf(1e-6),prior.ppf(1.0-1e-6)]
@@ -489,7 +489,7 @@ class CollectModel:
 					# A prior has been provided by the user for this dependency
 					prior = priordist[dependency_name]				
 					if np.size(prior) == 1:
-						if type(prior).__name__ == 'rv_frozen':
+						if type(prior).__name__ == 'rv_continuous_frozen':
 							# A frozen Scipy rvs_continuous instance. Will raise its own exception if it isn't properly set.
 							# Consider a range where the CDF goes from 1e-6 to 1 - 1e-6
 							xrange = [prior.ppf(1e-6),prior.ppf(1.0-1e-6)]
@@ -565,6 +565,8 @@ class CollectModel:
 		self.models = Models
 		self.number_of_parameters = NParams
 		self.priors = PriorDists
+		self.scaled_models = scaled_models
+		self.filter_scaling = filter_scaling
 
 		# Compile a list of parameter references, including redshift. 
 		# This order will be used for all further calls to likelihood, prior and sampling functions.
@@ -625,6 +627,10 @@ def prepare_output_file(datacollection,modelcollection,fitengine,OutputPath=None
 	FitFile.attrs.create("Description",description,dtype=np.dtype('S{0:3d}'.format(len(description))))
 			
 	FitFile.attrs.create("Redshift",datacollection.redshift.prior_grid) # Store the redshift used for the fit
+	FitFile.attrs.create("scaled_models", modelcollection.scaled_models)
+	filter_scaling_group = FitFile.create_group("filter_scaling")
+	for filterid, scaling_constant in modelcollection.filter_scaling.items():
+		filter_scaling_group[str(filterid)] = scaling_constant
 
 	# Store the photometry in a group within the file
 	photometry = FitFile.create_group("Photometry")

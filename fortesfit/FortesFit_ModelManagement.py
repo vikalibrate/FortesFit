@@ -1559,3 +1559,127 @@ def register_model_parallel(read_module, parameters, scale_parameter_name, descr
 	# ========================================================
 
 	return NewID
+
+def add_filter_to_model_parallel(ModelID, FilterIDs, n_processes):
+	""" Add a registered FORTES-FIT filter to a registered FORTES-FIT model
+	
+		ModelID:  FORTES-FIT local id for an existing model. 
+				  It must be already registered or an exception will be thrown.	
+		FilterIDs: List of FORTES-FIT local ids for an existing filter. 
+				   They must be already registered or an exception will be thrown.	
+		
+	"""
+
+	# Access the HDF5 file for the model
+	ModelDirectory    = FortesFit_Settings.ModelPhotometryDirectory+'Model{0:2d}/'.format(ModelID)
+	ModelFileName     = ModelDirectory+'{0:2d}.fortesmodel.hdf5'.format(ModelID)
+	#raise ValueError
+	try:
+		ModelFile     = h5py.File(ModelFileName, 'r+')
+		Model         = FullModel(ModelID,sed_readin=True)
+		# import the readmodule
+#		ReadModuleName    = 'fortesfit.model_readfunctions.readmodule_{0:02d}'.format(ModelID)
+#		ReadModule        = importlib.import_module(ReadModuleName)
+	except IOError:
+		print('Model {0:2d} has not been registered!'.format(ModelID))
+		raise ValueError(f'Missing files or folders for model {NewID}')
+	
+	# Read in the list of FORTES filters to add to the model
+	# If the filter is already included in the model, skip its processing
+	FilterList = []
+	for filterid in FilterIDs:
+		index, = np.where(Model.filterids == filterid)
+		if(len(index) > 0):
+			# Filter already exists in model
+			continue
+		try:
+			Filter = FortesFit_Filters.FortesFit_Filter(filterid)
+			FilterList.append(Filter)
+		except IOError:
+			print('add_filter_to_model_parallel: Filter initialisation failed.') 
+			ModelFile.close()
+			raise ValueError(f'Could not read some of the supplied filters. Make sure you have registered them first.')
+				
+	
+	# After checks, only proceed if there is still >0 filters to add to this model
+	if(len(FilterList) == 0):
+		# No filters to add
+		ModelFile.close()
+		raise ValueError(f'No filter to add. They may already exist in the model.')
+
+	# Determine the number of model parameters and the number of pivot points per parameter
+	ShapeParamNames  = Model.shape_parameter_names
+	ShapeParamPoints = []
+	for param in ShapeParamNames:
+		ShapeParamPoints.append(len(Model.shape_parameters[param]))
+
+	# Initialise empty arrays that will store the photometry and temporary dictionaries	
+	
+	# This cube stores the photometry at pivot shape parameters and all filters.
+	# Its shape is the number of all shape parameters and the number of filters (Nsp1,Nsp1,...,Nfilt)
+	# Info: even though the photometry cube is stored separately for each filter in the HDF5 file, 
+	#       it is more efficient to evaluate all filters together for each parameter pivot combination.
+	#       Therefore, the temporary storage is a supercube of this shape.
+	tempparlist = ShapeParamPoints.copy()
+	tempparlist.append(len(FilterList))
+	modelphot = np.empty(tuple(tempparlist),dtype='f4')
+	# This dictionary is updated at each pivot point and is an argument for the readin function
+	param_subset = dict.fromkeys(ShapeParamNames)
+	param_subset.update({Model.scale_parameter_name:Model.scale_parameter_value}) # Include the scale parameter
+
+	# Initialise the wavelength array that is used for filter processing in log microns
+	wave_range = Model.wave_range
+	ObsWave = np.log10(wave_range[0]) + np.arange(1001)*(np.log10(wave_range[1]/wave_range[0])/1000.0)
+
+	# For each pivot redshift access the existing group under the name z??, where ?? is the running counter of the redshift
+	#    array in dd form. To this group, add one dataset for each new filter. The datasets are multi-dimensional
+	#    cubes with one parameter per dimension. The dataset names are filterids.
+	
+	for iz in range(len(Model.pivot_redshifts)):
+		
+		# Name for the HDF5 group for this redshift
+		GroupName = 'z{0:02d}'.format(iz)
+		zpiv = ModelFile[GroupName]
+	
+				
+		for iparam in range(int(np.prod(ShapeParamPoints))):
+			# If there are shape parameters, loop over all of them
+			if len(ShapeParamNames) == 0:
+				paramgen = []
+			else:
+				# unravel indices to access the pivot points of each parameter
+				paramgen = np.unravel_index(iparam,ShapeParamPoints,order='C')
+				# fill the temporary parameter dictionary for the call to the read_function
+				for i,key in enumerate(ShapeParamNames):
+					param_subset[key] = Model.shape_parameters[key][paramgen[i]]
+			
+			# Call the readin function
+			sed = Model.get_pivot_sed(param_subset,Model.pivot_redshifts[iz])
+			# Interpolate the model onto the default wavelength scale
+			ObsFlux = np.interp(ObsWave,np.log10(sed['observed_wavelength']),np.log10(sed['observed_flux']),\
+						left=-np.inf,right=-np.inf)
+			# Initialise an index list that will be used to access the modelphotometry array
+			photindex = list(paramgen)
+			photindex.append(0) # This is a placeholder index for the filter
+			for ifilter in range(len(FilterList)):
+				# Loop over all filters
+				photindex[-1] = ifilter # Replace the placeholder with the filter index
+				modelphotsingle = FilterList[ifilter].apply({'wavelength':10**ObsWave,'flux':10**ObsFlux})
+				# Catch cases of negative or badly formed values
+				if (modelphotsingle > 0.0) and (np.isfinite(modelphotsingle)):
+					modelphot[tuple(photindex)] = np.log10(modelphotsingle)
+				else:
+					modelphot[tuple(photindex)] = -np.inf
+
+		# Write out the subcubes for each filter as a separate dataset in this group. FilterID is the dataset name
+		SubCubes = np.split(modelphot,len(FilterList),axis=modelphot.ndim-1) # list of cubes split into different filters
+		for ifilter in range(len(FilterList)):
+			DatasetName = '{0:6d}'.format(FilterList[ifilter].filterid)	
+			zpiv.create_dataset(DatasetName,data=SubCubes[ifilter])
+		
+		ModelFile.flush() # Flush the HDF5 file to disk
+		# Write out a counter to tell the user how many redshift points have been processed
+		print("{0:<3d} redshift points processed".format(iz+1),end="\r")
+			 
+	ModelFile.close()			
+	return None
