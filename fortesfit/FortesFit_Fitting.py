@@ -9,7 +9,7 @@ from scipy.optimize import minimize
 from fortesfit import FortesFit_Settings
 from fortesfit import FortesFit_Filters
 from fortesfit import FortesFit_ModelManagement
-
+import fortesfit.multinest_marginals_fancy_edited as pymplotting
  
 """ A module with functions that are used by the model fitting routines in FortesFit 
 
@@ -50,10 +50,12 @@ def	FortesFit_FitSingle(datacollection, modelcollection, fitfile, **kwargs):
 		chain = fitresult.chain
 		flatchain = chain.reshape((chain.shape[0]*chain.shape[1],chain.shape[2]),order='F')
 	elif fitengine == 'multinest':
-		from fortesfit.FortesFit_multinest import FortesFit_multinest, Multinest_cleanup
+		from fortesfit.FortesFit_multinest_devang import FortesFit_multinest, Multinest_cleanup
 		allsamples = FortesFit_multinest(varying_indices, datacollection, modelcollection, **kwargs)
 		flatchain = allsamples.get_equal_weighted_posterior()[:,0:-1]
-		Multinest_cleanup(**kwargs)			
+		paramnames = np.core.defchararray.decode(fitfile['Chain/Varying_parameters'][()])
+		save_diagnosis_json_plot(analyzer_object=allsamples, paramnames=paramnames, sourceid=f'{datacollection.id}')
+		Multinest_cleanup(**kwargs)	
 	else:
 		raise ValueError('Fitting Method not recognised')
 		return False
@@ -156,6 +158,13 @@ def	Sawicki12_loglikelihood(redshift,filters,fluxes,flux_errors,error_weights,mo
 	# loglike_lim += np.sum(np.log(np.sqrt(np.pi/2.0)*sigma*(1.0 + erf((fluxes[index] - modelFluxes[index])/(np.sqrt(2.0)*sigma)))))
 #	loglike_lim += np.sum(np.log(1.253314*sigma*(1.0 + erf((fluxes[index] - modelFluxes[index])/(1.4142136*sigma)))))
 	loglike_lim += np.sum(np.log(0.5*(1.0 + erf((fluxes[index] - modelFluxes[index])/(1.4142136*sigma)))))
+	########## Testing divided by zero encountered in log warning ##########
+	# try:
+	# 	loglike_lim += np.sum(np.log(0.5*(1.0 + erf((fluxes[index] - modelFluxes[index])/(1.4142136*sigma)))))
+	# except RuntimeWarning:
+	# 	breakpoint()
+	# 	raise ValueError
+	########################################################################
 
 	# If there are any cases of FluxErrors = 0.0, they are not used to calculate likelihoods, 
 	#     i.e, those fluxes are masked from fitting
@@ -208,4 +217,61 @@ def	FortesFit_FitSingle_MLE(Fluxes, FluxErrors, Redshift, Filters, Models, Param
 	
 	return mleresult
 
+	
+
+#==========================================================================================
+#								Dev code
+#==========================================================================================
+def save_diagnosis_json_plot(analyzer_object, paramnames, sourceid=None):
+	if sourceid is None: sourceid = 'sourceid'
+
+	import numpy
+	from numpy import exp, log
+	import matplotlib.pyplot as plt
+	import sys, os
+	import json
+	import pymultinest
+
+	# code from dynesty (MIT licensed)
+	from six.moves import range
+
+	import logging
+	import types
+	import math
+	import numpy as np
+	import matplotlib.pyplot as pl
+	from matplotlib.ticker import MaxNLocator, NullLocator
+	from matplotlib.colors import LinearSegmentedColormap, colorConverter
+	from matplotlib.ticker import ScalarFormatter
+	from scipy import spatial
+	from scipy.ndimage import gaussian_filter as norm_kde
+	from scipy.stats import gaussian_kde
+
+	s = analyzer_object.get_stats()
+	with open(f'stats/{sourceid}_stats.json', 'w') as jsonfh:
+		json.dump(s, jsonfh, indent=4)
+
+	print('creating marginal plot ...')
+	data = analyzer_object.get_data()
+	i = data[:,1].argsort()[::-1]
+	samples = data[i,2:]
+	weights = data[i,0]
+	loglike = data[i,1]
+	Z = s['global evidence']
+	logvol = np.log(weights) + 0.5 * loglike + Z
+	logvol = logvol - logvol.max()
+
+	#plt.plot(-0.5 * loglike, logvol, 'x ')
+	#plt.savefig('weights.pdf', bbox_inches='tight')
+	#plt.close()
+
+	results = dict(samples=samples, weights=weights, logvol=logvol)
+
+	pymplotting.traceplot(results, labels=paramnames, show_titles=True)
+	plt.savefig(f'traces/{sourceid}_trace.png', bbox_inches='tight')
+	plt.close()
+
+	pymplotting.cornerplot(results, labels=paramnames, show_titles=True)
+	plt.savefig(f'corners/{sourceid}_corner.png', bbox_inches='tight')
+	plt.close()
 	
