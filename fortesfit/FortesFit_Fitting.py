@@ -50,7 +50,7 @@ def	FortesFit_FitSingle(datacollection, modelcollection, fitfile, **kwargs):
 		chain = fitresult.chain
 		flatchain = chain.reshape((chain.shape[0]*chain.shape[1],chain.shape[2]),order='F')
 	elif fitengine == 'multinest':
-		from fortesfit.FortesFit_multinest_devang import FortesFit_multinest, Multinest_cleanup
+		from fortesfit.FortesFit_multinest import FortesFit_multinest, Multinest_cleanup
 		allsamples = FortesFit_multinest(varying_indices, datacollection, modelcollection, **kwargs)
 		flatchain = allsamples.get_equal_weighted_posterior()[:,0:-1]
 		paramnames = np.core.defchararray.decode(fitfile['Chain/Varying_parameters'][()])
