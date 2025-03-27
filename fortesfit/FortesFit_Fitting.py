@@ -9,7 +9,6 @@ from scipy.optimize import minimize
 from fortesfit import FortesFit_Settings
 from fortesfit import FortesFit_Filters
 from fortesfit import FortesFit_ModelManagement
-import fortesfit.multinest_marginals_fancy_edited as pymplotting
  
 """ A module with functions that are used by the model fitting routines in FortesFit 
 
@@ -158,13 +157,6 @@ def	Sawicki12_loglikelihood(redshift,filters,fluxes,flux_errors,error_weights,mo
 	# loglike_lim += np.sum(np.log(np.sqrt(np.pi/2.0)*sigma*(1.0 + erf((fluxes[index] - modelFluxes[index])/(np.sqrt(2.0)*sigma)))))
 #	loglike_lim += np.sum(np.log(1.253314*sigma*(1.0 + erf((fluxes[index] - modelFluxes[index])/(1.4142136*sigma)))))
 	loglike_lim += np.sum(np.log(0.5*(1.0 + erf((fluxes[index] - modelFluxes[index])/(1.4142136*sigma)))))
-	########## Testing divided by zero encountered in log warning ##########
-	# try:
-	# 	loglike_lim += np.sum(np.log(0.5*(1.0 + erf((fluxes[index] - modelFluxes[index])/(1.4142136*sigma)))))
-	# except RuntimeWarning:
-	# 	breakpoint()
-	# 	raise ValueError
-	########################################################################
 
 	# If there are any cases of FluxErrors = 0.0, they are not used to calculate likelihoods, 
 	#     i.e, those fluxes are masked from fitting

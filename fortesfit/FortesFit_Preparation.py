@@ -362,7 +362,7 @@ class CollectModel:
 		FortesFit.
 	"""
 	
-	def __init__(self,modellist,priordists,datacollection,scaled_models,filter_scaling):
+	def __init__(self,modellist,priordists,datacollection,scaled_models=None,filter_scaling=None):
 		""" Initialise the FortesFit model representation for a user-provided object
 			
 			modellist: list-like, the FortesFit ids of models in arbitrary order
@@ -381,7 +381,12 @@ class CollectModel:
 						information about the filters, redshifts and photometry to be fit.
 										
 		"""
-			
+		
+		if scaled_models is None:
+			scaled_models = []
+		if filter_scaling is None:
+			filter_scaling = {}
+
 		# Determine the redshift range, or fitting redshift if a single value
 		if datacollection.redshift.fixed:
 			redshift_range = datacollection.redshift.characteristic

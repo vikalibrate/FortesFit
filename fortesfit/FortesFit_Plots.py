@@ -247,7 +247,7 @@ def plot_corner(FortesFit_OutFile, cornerfig, BurnIn=10000, old=False):
 # ***********************************************************************************************
 
 def	PlotModelSEDs(FortesFit_OutFile, scaled_models, filter_scaling, wave_range = [1e-1,1e3], BurnIn=10000, PDF_File='', 
-	Nsamps=100, silent=False, old=False, legend=True, darkbg=False, sedfig=None, ax=None):
+	Nsamps=100, silent=False, old=False, legend=True, sedfig=None, ax=None):
 	""" Plot the best-fit combined SED, model photometry. 
 		From Nsamps SEDs drawn from the joint posterior, get the error SEDs for each component and overplot.
 		
@@ -363,10 +363,7 @@ def	PlotModelSEDs(FortesFit_OutFile, scaled_models, filter_scaling, wave_range =
 		BestFitFlux[index] += scatter[1,:]
 
 	# Plot the best-fit SED as a black thick line
-	if darkbg:
-		ax1.plot(10**(ObsWave),BestFitFlux,'white',lw=2, label='Best-fit SED')
-	else:
-		ax1.plot(10**(ObsWave),BestFitFlux,'k',lw=2, label='Best-fit SED')
+	ax1.plot(10**(ObsWave),BestFitFlux,'k',lw=2, label='Best-fit SED')
 
 	modelFluxes = np.zeros(len(Filters),dtype='f8')
 	for ifilt in range(len(FilterIDs)):
@@ -386,10 +383,7 @@ def	PlotModelSEDs(FortesFit_OutFile, scaled_models, filter_scaling, wave_range =
 	fluxconv = FilterWave[index]
 	plotfluxes = Fluxes[index]*fluxconv 
 	eplotfluxes = FluxErrors[index]*fluxconv 
-	if darkbg:
-		ax1.errorbar(FilterWave[index],plotfluxes,eplotfluxes,fmt='wo',ecolor='w', label='Observed flux')
-	else:
-		ax1.errorbar(FilterWave[index],plotfluxes,eplotfluxes,fmt='ko',ecolor='k', label='Observed flux')
+	ax1.errorbar(FilterWave[index],plotfluxes,eplotfluxes,fmt='ko',ecolor='k', label='Observed flux')
 	index, = np.where((Fluxes > 0.0) & (FluxErrors < 0.0))
 	fluxconv = FilterWave[index]
 	for i in range(len(index)):
@@ -397,8 +391,8 @@ def	PlotModelSEDs(FortesFit_OutFile, scaled_models, filter_scaling, wave_range =
 					 xytext=(FilterWave[index[i]],Fluxes[index[i]]*fluxconv[i]),arrowprops=dict(arrowstyle="->"))
 
 	ax1.loglog()
-	# ax1.set_xlabel(r'Observed Wavelength ($\mu$m)',size='x-large')
-	# ax1.set_ylabel(r'$\nu$F$_{\nu}$ (erg s$^{-1}$ cm$^{-2}$)',size='x-large')
+	ax1.set_xlabel(r'Observed Wavelength ($\mu$m)',size='x-large')
+	ax1.set_ylabel(r'$\nu$F$_{\nu}$ (erg s$^{-1}$ cm$^{-2}$)',size='x-large')
 
 	ax1.tick_params(axis='both',labelsize='large')
 	ax1.set_xlim(wave_range[0],wave_range[1])
@@ -406,174 +400,9 @@ def	PlotModelSEDs(FortesFit_OutFile, scaled_models, filter_scaling, wave_range =
 	ax2 = ax1.twiny()  # set up another axes to plot the rest-frame wavelength
 	ax2.semilogx()
 	ax2.set_xlim(wave_range[0]/(1.0+Redshift),wave_range[1]/(1.0+Redshift))
-	# ax2.set_xlabel(f'Rest Wavelength ($\mu$m) (z = {round(Redshift, 2)})',size='x-large')
+	ax2.set_xlabel(f'Rest Wavelength ($\mu$m) (z = {round(Redshift, 2)})',size='x-large')
 
-	# ax1.set_title(ObjectName,size='xx-large')
-
-	if legend:
-		ax1.legend()
-
-	if len(PDF_File) > 0:
-		output.savefig(sedfig)
-		output.close()
-	
-	return sedfig, ObsWave, BestFitFlux, Redshift
-
-def	PlotModelSEDs_rest(FortesFit_OutFile, scaled_models, filter_scaling, plotcols=None, scale_color=None, modelflux_color='red',
-	wave_range = [1e-1,1e3], 
-	BurnIn=10000, PDF_File='', Nsamps=100, silent=False, old=False, legend=True, darkbg=False, sedfig=None, ax=None):
-	""" 
-	Same as PlotModelSEDs but only plots rest wavelength on x-axis. I redefined the function because it's just easier
-	that way than adding an argument in the original function
-	"""		
-	
-	# Initialise PDF output if necessary
-	if plotcols is None:
-		plotcols = ['#456990', '#ef767a', '#49beaa']
-
-	if scale_color is None:
-		scale_color = plotcols[1]
-
-	if len(PDF_File) > 0:
-		if(not silent):
-			print('Summary plots will be sent to '+PDF_File)
-		output = PdfPages(PDF_File)
-		
-	# Initialise the wavelength flux array that is used for plotting the best-fit model (from 1000 Ang to 1mm) in microns
-	ObsWave = np.log10(wave_range[0]) + np.arange(101)*(np.log10(wave_range[1]/wave_range[0])/100.0)
-				
-	fitresult = FortesFitResult(FortesFit_OutFile, BurnIn=BurnIn, old=old)
-	# Write out a description of the fit
-	if(not silent):
-		print(fitresult.fit_description)	
-	ObjectName = fitresult.objectname 
-
-	# Compile the filter wavelengths that were used in the fit
-	FilterIDs = fitresult.fit_filterids
-	scaledfilterIDs = list(filter_scaling.keys())
-	is_scaledfilter = np.array([1 if cur_filter in scaledfilterIDs else 0 for cur_filter in FilterIDs], dtype=bool)
-	Filters = [FortesFit_Filter(filterid) for filterid in FilterIDs]
-	FilterWave = np.array([filter.pivot_wavelength for filter in Filters])	
-
-	Fluxes     = fitresult.fit_fluxes
-	FluxErrors = fitresult.fit_fluxerrors
-
-	ModelIDs = fitresult.fit_modelids
-	Models = []
-	for modelid in ModelIDs:
-		Models.append(FullModel(modelid,sed_readin=True))
-	Nmodels = len(ModelIDs)
-
-	# Create a list of model parameter dictionaries with best-fit/fixed parameter values. These will be changed
-	#  when processing the individual model SEDs
-	paramdict_plot = [{} for imodel in range(Nmodels)]
-	for param in fitresult.bestfit_parameters.keys():
-		for imodel in range(Nmodels):
-			if param[0:2] == '{0:2d}'.format(ModelIDs[imodel]):
-				paramdict_plot[imodel].update({param[3:]:fitresult.bestfit_parameters[param][0]})
-
-	if sedfig is None:
-		ax1 = ax
-	else:
-		ax1 = sedfig.gca()
-
-	# Obtain the flattened chains
-	samples = fitresult.all_samples
-
-	# Overplot the SEDs from Nsamps random samples from the burned-in chains
-	sample_seds = np.zeros((Nsamps,len(ObsWave),Nmodels))
-	sample_photometry = np.zeros((Nsamps,len(FilterIDs)))
-	for isamp in range(Nsamps):
-		# Take a random position along the chain
-		parameter_sample  = samples[np.random.randint(samples.shape[0]),:]
-		paramdict_varying = dict(zip(fitresult.fit_parameter_names,parameter_sample))	
-		if fitresult.redshift == -99.0:
-			Redshift = paramdict_varying['Redshift']
-		else:
-			Redshift = fitresult.redshift
-		for imodel,modelid in enumerate(ModelIDs):
-			model = Models[imodel]
-			for param in paramdict_plot[imodel].keys():
-				uparam = '{0:2d}_'.format(model.modelid)+param
-				if uparam in paramdict_varying:
-					paramdict_plot[imodel][param] = paramdict_varying[uparam]
-			sed = model.get_pivot_sed(paramdict_plot[imodel],Redshift)
-			index, = np.where(sed['observed_flux'] > 0.0) # Only interpolate over valid parts of the model SED
-			tempflux = np.interp(ObsWave,np.log10(sed['observed_wavelength'][index]),np.log10(sed['observed_flux'][index]),\
-								 left=-np.inf,right=-np.inf) + ObsWave	
-			sample_seds[isamp,:,imodel] = 10**(tempflux)
-
-			if modelid in scaled_models:
-				fitmodel = FitModel(modelid,Redshift,FilterIDs,filter_scaling=filter_scaling)
-			else:
-				fitmodel = FitModel(modelid,Redshift,FilterIDs,filter_scaling=None)
-
-			tmp_model_photometry = []
-			for ifilt in range(len(FilterIDs)):
-				tmp_photometry = 3.63e-5*10**(fitmodel.evaluate(paramdict_plot[imodel],Redshift,FilterIDs[ifilt]))*FilterWave[ifilt]
-				try:
-					tmp_model_photometry.append(tmp_photometry[0])
-				except:
-					tmp_model_photometry.append(tmp_photometry)
-
-			tmp_model_photometry = np.array(tmp_model_photometry)
-			sample_photometry[isamp] += tmp_model_photometry
-
-			if np.all(tmp_model_photometry == 0):
-				sample_seds[isamp,:,imodel] = sample_seds[isamp,:,imodel]*0
-
-	# Now get a lower and upper scatter at each wavelength point of the models and plot a filled polygon
-	BestFitFlux = np.zeros(len(ObsWave))  # the array for the summed best-fit SED
-	for imodel in range(Nmodels):
-		index, = np.where(sample_seds[0,:,imodel] != 0.0) # get range of sample data from first model SED in set
-		scatter = np.percentile(sample_seds[:,index,imodel],[16,50,84],axis=0,interpolation='nearest')
-		ax1.fill_between(10**(ObsWave[index])/(1 + Redshift),scatter[0,:],scatter[2,:],\
-						 color=plotcols[imodel],alpha=0.2,lw=1)
-		ax1.plot(10**(ObsWave[index])/(1 + Redshift),scatter[1,:],color=plotcols[imodel],lw=2)
-		BestFitFlux[index] += scatter[1,:]
-
-	# Plot the best-fit SED as a black thick line
-	if darkbg:
-		ax1.plot(10**(ObsWave)/(1 + Redshift),BestFitFlux,'white',lw=2, label='Best-fit SED')
-	else:
-		ax1.plot(10**(ObsWave)/(1 + Redshift),BestFitFlux,'k',lw=2, label='Best-fit SED')
-
-	modelFluxes = np.zeros(len(Filters),dtype='f8')
-	for ifilt in range(len(FilterIDs)):
-		modelFluxes[ifilt] = np.median(sample_photometry[:,ifilt])
-	ax1.plot(FilterWave/(1 + Redshift),modelFluxes,color=modelflux_color,lw=0,marker='o',fillstyle='none', label='Model flux')
-
-	# Use the points with valid photometry to determine the plotting range
-	index, = np.where(Fluxes > 0.0)
-	fluxconv = FilterWave[index]
-	limitfluxes = Fluxes[index]*fluxconv
-	axrange = [0.8*FilterWave.min(),1.2*FilterWave.max(),\
-			   0.1*limitfluxes.min(),10.0*limitfluxes.max()]
-	ax1.axis(axrange)
-	
-	# Plot the photometric points
-	index_unscaled, = np.where((Fluxes > 0.0) & (FluxErrors > 0.0) & (~is_scaledfilter))
-	index_scaled, = np.where((Fluxes > 0.0) & (FluxErrors > 0.0) & is_scaledfilter)
-	if darkbg:
-		ax1.errorbar(FilterWave[index]/(1 + Redshift), Fluxes[index]*FilterWave[index], FluxErrors[index]*FilterWave[index],
-			fmt='wo',ecolor='w', label='Observed flux')
-	else:
-		ax1.errorbar(FilterWave[index_unscaled]/(1 + Redshift), Fluxes[index_unscaled]*FilterWave[index_unscaled], 
-			FluxErrors[index_unscaled]*FilterWave[index_unscaled], fmt='ko', ecolor='k', label='Observed flux')
-		ax1.errorbar(FilterWave[index_scaled]/(1 + Redshift), Fluxes[index_scaled]*FilterWave[index_scaled], 
-			FluxErrors[index_scaled]*FilterWave[index_scaled], fmt='o', color=scale_color)
-	index, = np.where((Fluxes > 0.0) & (FluxErrors < 0.0))
-	fluxconv = FilterWave[index]
-	for i in range(len(index)):
-		ax1.annotate("", xy=(FilterWave[index[i]]/(1 + Redshift),0.5*Fluxes[index[i]]*fluxconv[i]),\
-					 xytext=(FilterWave[index[i]]/(1 + Redshift),Fluxes[index[i]]*fluxconv[i]),arrowprops=dict(arrowstyle="->"))
-
-	ax1.loglog()
-	# ax1.set_xlabel(r'Observed Wavelength ($\mu$m)',size='x-large')
-	# ax1.set_ylabel(r'$\nu$F$_{\nu}$ (erg s$^{-1}$ cm$^{-2}$)',size='x-large')
-
-	ax1.tick_params(axis='both',labelsize='large')
-	ax1.set_xlim(wave_range[0],wave_range[1])
+	ax1.set_title(ObjectName,size='xx-large')
 
 	if legend:
 		ax1.legend()
@@ -582,7 +411,8 @@ def	PlotModelSEDs_rest(FortesFit_OutFile, scaled_models, filter_scaling, plotcol
 		output.savefig(sedfig)
 		output.close()
 	
-	return sedfig, ObsWave, BestFitFlux, Redshift
+	return sedfig
+
 # ***********************************************************************************************
 
 def	PlotPosteriors(FortesFit_OutFile, BurnIn=10000, old=False):
@@ -686,135 +516,6 @@ def	PlotPosteriors(FortesFit_OutFile, BurnIn=10000, old=False):
 		if ch == 'n': return
 
 	return
-
-def	plot_selected_prior_post(FortesFit_OutFile, fig, parameters_of_interest, BurnIn=10000, old=False):
-	""" Plot the posterior distributions for the parameters, with the priors shown for comparison
-		
-		FortesFit_Outfile:  HDF5 file with the outputs from FortesFit
-		BurnIn: The number of samples on the MCMC chains to exclude to allow for convergence
-	
-	"""		
-
-	n_subplots = len(parameters_of_interest)
-	done_subplots = 0
-
-	if n_subplots > 9:
-		print("Maximum of 9 parameters of interest can be plotted.")
-		return 1
-	
-	fitresult = FortesFitResult(FortesFit_OutFile, BurnIn=BurnIn, old=old)
-	print(fitresult.fit_description)	
-	ObjectName = fitresult.objectname 
-
-	bestfit_parameters = fitresult.bestfit_parameters
-
-	for imodel, modelid in enumerate(fitresult.fit_modelids):
-		model = FullModel(modelid)
-		modelname = model.description
-		n_parameters = 1+ len(model.shape_parameter_names)
-		# Loop through each parameter
-		for iparam in range(n_parameters):		
-			if iparam == 0:
-				uparam = '{0:2d}_'.format(modelid)+model.scale_parameter_name
-			else:
-				uparam = '{0:2d}_'.format(modelid)+model.shape_parameter_names[iparam-1]
-
-			if uparam[3:] in parameters_of_interest:
-				ax = fig.add_subplot(3, 3, done_subplots + 1)
-				done_subplots = done_subplots + 1
-				if bestfit_parameters[uparam][1] == 'Fit':
-				
-					prior = fitresult.priors[uparam]
-					ax.plot(prior[0,:],prior[1,:],'k')
-					axrange = ax.axis()
-			
-					index, = np.where(fitresult.fit_parameter_names == uparam)
-					plotrange = [np.min(prior[0,:]),np.max(prior[0,:])]
-	#				plotrange = fitresult.percentiles([0.1,99.1])[uparam]
-					histogram = ax.hist(fitresult.all_samples[:,index[0]],range=plotrange,bins=30,\
-					   					 histtype='stepfilled',color='k',alpha=0.7,density=True)
-
-					ax.set_xlim(left=plotrange[0],right=plotrange[1])
-					# Reasonable ticks (4 per parameter)
-					xticks = ax.get_xticks()
-					nskip = np.int(len(xticks)/3)
-					ax.set_xticks(xticks[1::nskip])
-					ax.tick_params(axis='x',labelsize='small')
-					ax.tick_params(axis='y',left=False,labelleft=False)		
-					ax.text(0.9, 0.9, uparam[3:], ha='right', va='top', fontsize=10, transform=ax.transAxes)
-
-				else:
-
-					ax.axis([0,1,0,1])
-					plt.text(0.5,0.4,'Fixed at '+str(bestfit_parameters[uparam][0]),size='small',ha='center')
-					ax.tick_params(axis='both',bottom=False,labelbottom=False,left=False,labelleft=False)		
-					ax.text(0.9, 0.9, uparam[3:], ha='right', va='top', fontsize=10, transform=ax.transAxes)
-
-	fig.subplots_adjust(hspace=0.3)
-	# fig.suptitle(f'{ObjectName}, z={round(fitresult.redshift, 2)}')
-	return fig
-
-def	plot_prior_post(FortesFit_OutFile, fig, BurnIn=10000, old=False):
-	""" Plot the posterior distributions for the parameters, with the priors shown for comparison
-		
-		FortesFit_Outfile:  HDF5 file with the outputs from FortesFit
-		BurnIn: The number of samples on the MCMC chains to exclude to allow for convergence
-	
-	"""		
-	
-	fitresult = FortesFitResult(FortesFit_OutFile, BurnIn=BurnIn, old=old)
-	print(fitresult.fit_description)	
-	ObjectName = fitresult.objectname 
-
-	bestfit_parameters = fitresult.bestfit_parameters
-
-	for imodel, modelid in enumerate(fitresult.fit_modelids):
-		model = FullModel(modelid)
-		modelname = model.description
-		n_parameters = 1+ len(model.shape_parameter_names)
-		npages = int(n_parameters / 9) + 1
-		# Loop through each parameter
-		for iparam in range(n_parameters):
-
-			xstart = iparam % 3
-			ystart = imodel
-			ax = fig.add_axes([0.08+xstart*(0.8/3+0.03), 0.95-(ystart+1)*0.8/3-0.05, 0.8/3, 0.6/3])			
-
-			if iparam == 0:
-				uparam = '{0:2d}_'.format(modelid)+model.scale_parameter_name
-			else:
-				uparam = '{0:2d}_'.format(modelid)+model.shape_parameter_names[iparam-1]			 
-
-			if bestfit_parameters[uparam][1] == 'Fit':
-			
-				prior = fitresult.priors[uparam]
-				ax.plot(prior[0,:],prior[1,:],'k')
-				axrange = ax.axis()
-		
-				index, = np.where(fitresult.fit_parameter_names == uparam)
-				plotrange = [np.min(prior[0,:]),np.max(prior[0,:])]
-#				plotrange = fitresult.percentiles([0.1,99.1])[uparam]
-				histogram = ax.hist(fitresult.all_samples[:,index[0]],range=plotrange,bins=30,\
-				   					 histtype='stepfilled',color='k',alpha=0.7,density=True)
-
-				ax.set_xlim(left=plotrange[0],right=plotrange[1])
-				# Reasonable ticks (4 per parameter)
-				xticks = ax.get_xticks()
-				nskip = np.int(len(xticks)/3)
-				ax.set_xticks(xticks[1::nskip])
-				ax.tick_params(axis='x',labelsize='small')
-				ax.tick_params(axis='y',left=False,labelleft=False)		
-				ax.set_title(uparam[3:], fontsize=6)
-
-			else:
-
-				ax.axis([0,1,0,1])
-				plt.text(0.5,0.4,'Fixed at '+str(bestfit_parameters[uparam][0]),size='small',ha='center')
-				ax.tick_params(axis='both',bottom=False,labelbottom=False,left=False,labelleft=False)		
-				ax.set_title(uparam[3:])
-
-	fig.suptitle(f'{ObjectName}, z={round(fitresult.redshift, 2)}')
-	return fig
 
 # ***********************************************************************************************
 
@@ -972,155 +673,3 @@ def		examine_model_seds(ModelID, nsamples=3, filterids=[], wave_range = [1e-2,1e
 	return sedfig
 
 #*******************************************************************
-#Dev code
-#*******************************************************************
-
-def	get_model_SEDs(FortesFit_OutFile, scaled_models=None, filter_scaling=None, BurnIn=None, silent=False, old=False):
-	""" Plot the best-fit combined SED, model photometry. 
-		From Nsamps SEDs drawn from the joint posterior, get the error SEDs for each component and overplot.
-		
-		FortesFit_Outfile:  HDF5 file with the outputs from FortesFit
-		BurnIn: The number of samples on the MCMC chains to exclude to allow for convergence
-		silent: If True, no information messages are used. Serial plots are shown for 2 seconds.
-	
-	"""
-
-	if BurnIn is None: BurnIn = 0
-	if scaled_models is None: scaled_models = []
-				
-	fitresult = FortesFitResult(FortesFit_OutFile, BurnIn=BurnIn, old=old)
-	# Write out a description of the fit
-	if(not silent):
-		print(fitresult.fit_description)	
-	ObjectName = fitresult.objectname 
-
-	# Compile the filter wavelengths that were used in the fit
-	FilterIDs = fitresult.fit_filterids
-	Filters = [FortesFit_Filter(filterid) for filterid in FilterIDs]
-	FilterWave = np.array([filter.pivot_wavelength for filter in Filters])	
-
-	ModelIDs = fitresult.fit_modelids
-	Nmodels = len(ModelIDs)
-
-	# Create a list of model parameter dictionaries with best-fit/fixed parameter values. These will be changed
-	#  when processing the individual model SEDs
-	paramdict_plot = [{} for imodel in range(Nmodels)]
-	for param in fitresult.bestfit_parameters.keys():
-		for imodel in range(Nmodels):
-			if param[0:2] == '{0:2d}'.format(ModelIDs[imodel]):
-				paramdict_plot[imodel].update({param[3:]:fitresult.bestfit_parameters[param][0]})	
-
-	Redshift = fitresult.redshift
-	final_bestfit_seds = np.zeros((len(Filters), Nmodels + 1))
-
-	for imodel, modelid in enumerate(ModelIDs):
-		if modelid in scaled_models:
-			fitmodel = FitModel(modelid, Redshift, FilterIDs, filter_scaling=filter_scaling)
-		else:
-			fitmodel = FitModel(modelid, Redshift, FilterIDs, filter_scaling=None)
-
-		for ifilt, filterid in enumerate(FilterIDs):
-			final_bestfit_seds[ifilt, imodel] = 3.63e-5*10**(fitmodel.evaluate(paramdict_plot[imodel], 
-				Redshift, filterid))*FilterWave[ifilt]
-
-	rest_wavelengths = FilterWave/(1.0 + Redshift)
-	final_bestfit_seds[:, -1] = np.sum(final_bestfit_seds, axis=1)
-	
-	return final_bestfit_seds, rest_wavelengths, Redshift
-
-def	return_sample_SEDs(FortesFit_OutFile, scaled_models, filter_scaling, wave_range = [1e-1,1e3], BurnIn=10000, PDF_File='', 
-	Nsamps=100, silent=False, old=False, legend=True):
-	""" Plot the best-fit combined SED, model photometry. 
-		From Nsamps SEDs drawn from the joint posterior, get the error SEDs for each component and overplot.
-		
-		FortesFit_Outfile:  HDF5 file with the outputs from FortesFit
-		wave_range: Wavelength range to plot the SEDs, list-like two-element, ([starting, ending] wavelength in microns)
-		BurnIn: The number of samples on the MCMC chains to exclude to allow for convergence
-		PDF_File: A file to send the plotted SEDs. One page per fitted object.
-		Nsamps: Number of samples to draw from joint posterior. Default = 100. Will affect the speed of the routine.
-		silent: If True, no information messages are used. Serial plots are shown for 2 seconds.
-	
-	"""		
-		
-	# Initialise the wavelength flux array that is used for plotting the best-fit model (from 1000 Ang to 1mm) in microns
-	ObsWave = np.log10(wave_range[0]) + np.arange(101)*(np.log10(wave_range[1]/wave_range[0])/100.0)
-				
-	fitresult = FortesFitResult(FortesFit_OutFile, BurnIn=BurnIn, old=old)
-	# Write out a description of the fit
-	if(not silent):
-		print(fitresult.fit_description)	
-	ObjectName = fitresult.objectname 
-
-	# Compile the filter wavelengths that were used in the fit
-	FilterIDs = fitresult.fit_filterids
-	Filters = [FortesFit_Filter(filterid) for filterid in FilterIDs]
-	FilterWave = np.array([filter.pivot_wavelength for filter in Filters])	
-
-	Fluxes     = fitresult.fit_fluxes
-	FluxErrors = fitresult.fit_fluxerrors
-
-	ModelIDs = fitresult.fit_modelids
-	Models = []
-	for modelid in ModelIDs:
-		Models.append(FullModel(modelid,sed_readin=True))
-	Nmodels = len(ModelIDs)
-
-	# Create a list of model parameter dictionaries with best-fit/fixed parameter values. These will be changed
-	#  when processing the individual model SEDs
-	paramdict_plot = [{} for imodel in range(Nmodels)]
-	for param in fitresult.bestfit_parameters.keys():
-		for imodel in range(Nmodels):
-			if param[0:2] == '{0:2d}'.format(ModelIDs[imodel]):
-				paramdict_plot[imodel].update({param[3:]:fitresult.bestfit_parameters[param][0]})
-
-	# Obtain the flattened chains
-	samples = fitresult.all_samples
-
-	# Overplot the SEDs from Nsamps random samples from the burned-in chains
-	sample_seds = np.zeros((Nsamps,len(ObsWave),Nmodels))
-	sample_photometry = np.zeros((Nsamps,len(FilterIDs)))
-	for isamp in range(Nsamps):
-		# Take a random position along the chain
-		parameter_sample  = samples[np.random.randint(samples.shape[0]),:]
-		paramdict_varying = dict(zip(fitresult.fit_parameter_names,parameter_sample))	
-		if fitresult.redshift == -99.0:
-			Redshift = paramdict_varying['Redshift']
-		else:
-			Redshift = fitresult.redshift
-		for imodel,modelid in enumerate(ModelIDs):
-			model = Models[imodel]
-			for param in paramdict_plot[imodel].keys():
-				uparam = '{0:2d}_'.format(model.modelid)+param
-				if uparam in paramdict_varying:
-					paramdict_plot[imodel][param] = paramdict_varying[uparam]
-			sed = model.get_pivot_sed(paramdict_plot[imodel],Redshift)
-			index, = np.where(sed['observed_flux'] > 0.0) # Only interpolate over valid parts of the model SED
-			tempflux = np.interp(ObsWave,np.log10(sed['observed_wavelength'][index]),np.log10(sed['observed_flux'][index]),\
-								 left=-np.inf,right=-np.inf) + ObsWave	
-			sample_seds[isamp,:,imodel] = 10**(tempflux)
-
-			if modelid in scaled_models:
-				fitmodel = FitModel(modelid,Redshift,FilterIDs,filter_scaling=filter_scaling)
-			else:
-				fitmodel = FitModel(modelid,Redshift,FilterIDs,filter_scaling=None)
-
-			for ifilt in range(len(FilterIDs)):
-				sample_photometry[isamp,ifilt] += \
-					3.63e-5*10**(fitmodel.evaluate(paramdict_plot[imodel],Redshift,FilterIDs[ifilt]))*FilterWave[ifilt]
-
-	BestFitFlux = np.zeros((Nmodels + 1, len(ObsWave)))  # the array for the summed best-fit SED
-	for imodel in range(Nmodels):
-		index, = np.where(sample_seds[0,:,imodel] != 0.0) # get range of sample data from first model SED in set
-		scatter = np.percentile(sample_seds[:,index,imodel],[16,50,84],axis=0,interpolation='nearest')
-		BestFitFlux[imodel, index] = scatter[2,:]
-		BestFitFlux[-1, index] += scatter[2,:]
-
-	index, = np.where((Fluxes > 0.0) & (FluxErrors > 0.0))
-	fluxconv = FilterWave[index]
-	plotfluxes = Fluxes[index]*fluxconv 
-
-	modelFluxes = np.zeros(len(Filters),dtype='f8')
-	for ifilt in range(len(FilterIDs)):
-		modelFluxes[ifilt] = np.median(sample_photometry[:,ifilt])
-
-	return (plotfluxes, FilterWave[index]), (modelFluxes, FilterWave), (BestFitFlux, ObsWave)
