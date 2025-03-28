@@ -111,7 +111,7 @@ def register_filter(wavelength, throughput, format='photon', reference='User', d
 		print('You are registering your first filter. Exciting!')
 	OldIDs = []
 	for OldFile in OldFilterFiles:
-		OldIDs.append(np.int(os.path.basename(OldFile).split('.')[0]))
+		OldIDs.append(int(os.path.basename(OldFile).split('.')[0]))
 	OldIDs = np.array(OldIDs,dtype=int)		
 
 	# Assign a random and unique 6 digit number for the new filter.
@@ -235,7 +235,7 @@ def summarize_filters():
 		print('No existing filters found.')
 		return []
 	for FilterFile in FilterFileList:
-		FilterID = np.int(os.path.basename(FilterFile).split('.')[0])
+		FilterID = int(os.path.basename(FilterFile).split('.')[0])
 		Filter = FortesFit_Filter(FilterID)
 		FilterFormat = Filter.format
 		FilterDesc = Filter.description

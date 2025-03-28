@@ -739,7 +739,7 @@ def examine_priors(modelcollection):
 
 				# Reasonable ticks (4 per parameter)
 				xticks = ax.get_xticks()
-				nskip = np.int(len(xticks)/3)
+				nskip = int(len(xticks)/3)
 				ax.set_xticks(xticks[1::nskip])
 				ax.tick_params(axis='x',labelsize='medium')
 				ax.tick_params(axis='y',left=False,labelleft=False)		

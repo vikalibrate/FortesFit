@@ -189,7 +189,7 @@ def	SummaryFigures(FortesFit_OutFile, BurnIn=10000, old=False):
 
 		# Reasonable ticks (2 per parameter)
 		yticks = parax.get_yticks()
-		nskip = np.int(len(yticks)/2)
+		nskip = int(len(yticks)/2)
 		parax.set_yticks(yticks[1::nskip])
 		parax.tick_params(axis='y',labelsize='small')
 
@@ -498,7 +498,7 @@ def	PlotPosteriors(FortesFit_OutFile, BurnIn=10000, old=False):
 				ax.set_xlim(left=plotrange[0],right=plotrange[1])
 				# Reasonable ticks (4 per parameter)
 				xticks = ax.get_xticks()
-				nskip = np.int(len(xticks)/3)
+				nskip = int(len(xticks)/3)
 				ax.set_xticks(xticks[1::nskip])
 				ax.tick_params(axis='x',labelsize='medium')
 				ax.tick_params(axis='y',left=False,labelleft=False)		
@@ -612,7 +612,7 @@ def		examine_model_seds(ModelID, nsamples=3, filterids=[], wave_range = [1e-2,1e
 
 	fullmodel = FullModel(ModelID,sed_readin=True)
 	# Use the average redshift in the model grid for evaluation. zero index is a dummy
-	redshift  = fullmodel.pivot_redshifts[np.int(len(fullmodel.pivot_redshifts)/2)] 
+	redshift  = fullmodel.pivot_redshifts[int(len(fullmodel.pivot_redshifts)/2)] 
 	# If no filterids are provided, instantiate the full model to get the full list of filterids
 	if len(filterids) == 0:
 		filterids = fullmodel.filterids

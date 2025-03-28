@@ -82,7 +82,7 @@ class FullModel:
 		self.pivot_redshifts = Model.attrs['Pivot_Redshifts']
 		
 		# Store a list of current filters, take from the list of datasets from the first redshift group
-		self.filterids = np.array([np.int(x) for x in list(Model['z00'])])
+		self.filterids = np.array([int(x) for x in list(Model['z00'])])
 		
 		if sed_readin:
 			# Get the readin module and initialise templates if necessary
@@ -365,7 +365,7 @@ def registration_progress_counter(total_points, model_ID):
 	print(f'[Model{model_ID}] {counter.value}/{total_points} redshift points done.', end="\r")
 
 def process_single_z_point(iz, redshift_array, read_module, parameters, templates, FilterList, ShapeParamNames, 
-	ShapeParamPoints, ObsWave, param_subset, modelphot, NewModelDirectory, NewID, from_templates=True, Model=None):
+	ShapeParamPoints, ObsWave, param_subset, modelphot, NewModelDirectory, NewID):
 
 	'''
 	A function to evaluate and save the SED at a single redshift point, and a given set of filters.
@@ -396,9 +396,7 @@ def process_single_z_point(iz, redshift_array, read_module, parameters, template
 	
 	n_pivotPoints = int(np.prod(ShapeParamPoints))
 	total_z_points = len(redshift_array)
-	if from_templates:
-		# Can not supply the ReadModule directly with partial (TypeError: cannot pickle 'module' object)
-		ReadModule = __import__(read_module) 
+	ReadModule = __import__(read_module)
 	
 	for iparam in range(n_pivotPoints):
 		# If there are shape parameters, loop over all of them
@@ -412,10 +410,8 @@ def process_single_z_point(iz, redshift_array, read_module, parameters, template
 				param_subset[key] = parameters[key][paramgen[i]]
 
 		# Call the readin function
-		if from_templates:
-			sed = ReadModule.readin(param_subset, redshift_array[iz], templates=templates)
-		else:
-			sed = Model.get_pivot_sed(param_subset, redshift_array[iz])
+		sed = ReadModule.readin(param_subset, redshift_array[iz], templates=templates)
+
 		# Interpolate the model onto the default wavelength scale
 		ObsFlux = np.interp(ObsWave, np.log10(sed['observed_wavelength']), np.log10(sed['observed_flux']), left = -np.inf, 
 			right = -np.inf)
@@ -790,7 +786,13 @@ def add_filter_to_model(ModelID, FilterIDs, n_processes=1):
 		FilterIDs: List of FORTES-FIT local ids for an existing filter. 
 				   They must be already registered or an exception will be thrown.	
 		
+		!!! WARNING: YOU MUST BE IN THE MODEL DIRECTORY TO RUN THIS !!!
 	"""
+	# Setup a global counter to keep track of how many redshift points are processed
+	# https://stackoverflow.com/questions/1233222/python-multiprocessing-easy-way-to-implement-a-simple-counter
+	global counter, counter_lock
+	counter = Value(c_int) # defaults to 0
+	counter_lock = Lock()
 
 	# ============== validation and model read ===================
 	# redefine the different paths to register the model
@@ -808,7 +810,7 @@ def add_filter_to_model(ModelID, FilterIDs, n_processes=1):
 	print(f'Resuming the registration of model {ModelID}')
 	print(f'Will ignore all the other user supplied attributes and read them from HDF5 file from previous registration instead')
 
-	Model = FullModel(ModelID,sed_readin=True)
+	Model = FullModel(ModelID, sed_readin=True)
 	# ============================================================
 
 	# ==================== read new filters ======================
@@ -826,13 +828,11 @@ def add_filter_to_model(ModelID, FilterIDs, n_processes=1):
 			FilterList.append(Filter)
 		except IOError:
 			print(f'Filter initialisation failed for filter ID {filterid}.') 
-			ModelFile.close()
 			raise ValueError(f'Could not read some of the supplied filters. Make sure you have registered all of them first.')
 				
 	# After checks, only proceed if there is still >0 filters to add to this model
 	if(len(FilterList) == 0):
 		# No filters to add
-		ModelFile.close()
 		raise ValueError(f'No filter to add. They may already exist in the model.')
 	# ============================================================
 
@@ -861,6 +861,12 @@ def add_filter_to_model(ModelID, FilterIDs, n_processes=1):
 	param_subset = dict.fromkeys(ShapeParamNames)
 	param_subset.update({Model.scale_parameter_name: Model.scale_parameter_value}) # Include the scale parameter
 
+	# If there is a readtemplates function in the readmodule, call it to get the templates
+	# to provide to the readin function. This can help speed up the read in process, and is necessary
+	# for some readmodules.
+	read_module = 'readmodule_{0:2d}'.format(ModelID)
+	templates = Model.templates
+
 	shape_parameters = Model.shape_parameters
 	pivot_redshifts = Model.pivot_redshifts
 	index_not_done = [iz for iz in np.arange(len(pivot_redshifts)) if not os.path.exists(ModelDirectory + 'z{0:02d}_temp.npy'.format(iz))]
@@ -875,10 +881,10 @@ def add_filter_to_model(ModelID, FilterIDs, n_processes=1):
 		p = Pool(processes = n_processes)
 		# creates a functions that contains already all the necessary parameters to produces the data cubes.
 		# the function "partial" creates a new function "process_single_z_point" for which all parameters are registered.
-		function = partial(process_single_z_point, ShapeParamPoints = ShapeParamPoints, read_module = None, 
-			param_subset = param_subset, ObsWave = ObsWave, redshift_array = pivot_redshifts, templates = None, 
+		function = partial(process_single_z_point, ShapeParamPoints = ShapeParamPoints, read_module = read_module, 
+			param_subset = param_subset, ObsWave = ObsWave, redshift_array = pivot_redshifts, templates = templates, 
 			ShapeParamNames = ShapeParamNames, FilterList = FilterList, modelphot = modelphot, NewModelDirectory = ModelDirectory, 
-			parameters = shape_parameters, NewID = ModelID, from_templates = False, Model = Model)
+			parameters = shape_parameters, NewID = ModelID)
 		# distribute the redshift indexes to the different processes
 		simu = p.map(function, index_not_done)
 		p.close()
@@ -887,10 +893,10 @@ def add_filter_to_model(ModelID, FilterIDs, n_processes=1):
 	# if a single core is used, the function "process_single_z_point" is run in a loop over all redshift indexes.
 	else:
 		for iz in index_not_done:
-			process_single_z_point(iz, ShapeParamPoints = ShapeParamPoints, read_module = None, param_subset = param_subset,
-				ObsWave = ObsWave, redshift_array = pivot_redshifts, templates = None, ShapeParamNames = ShapeParamNames,
+			process_single_z_point(iz, ShapeParamPoints = ShapeParamPoints, read_module = read_module, param_subset = param_subset,
+				ObsWave = ObsWave, redshift_array = pivot_redshifts, templates = templates, ShapeParamNames = ShapeParamNames,
 				FilterList = FilterList, modelphot = modelphot, NewModelDirectory = ModelDirectory, parameters = shape_parameters, 
-				NewID = ModelID, from_templates = False, Model = Model)
+				NewID = ModelID)
 
 	# !!! TODO !!!
 	# Current solution to add from_tamplates attribute in process_single_z_point() is error prone with many failture mode
@@ -908,7 +914,7 @@ def add_filter_to_model(ModelID, FilterIDs, n_processes=1):
 		GroupName = 'z{0:02d}'.format(iz)
 		zpiv = ModelFile[GroupName]
 		# loads the corresponding subCube numpy array.
-		SubCubes = np.load(NewModelDirectory + 'z{0:02d}_temp.npy'.format(iz))
+		SubCubes = np.load(ModelDirectory + 'z{0:02d}_temp.npy'.format(iz))
 		
 		for ifilter in range(len(FilterList)):
 			DatasetName = '{0:6d}'.format(FilterList[ifilter].filterid)	
@@ -916,7 +922,7 @@ def add_filter_to_model(ModelID, FilterIDs, n_processes=1):
 
 		ModelFile.flush() # Flush the HDF5 file to disk
 		# removes the subcube numpy array once registered in the HDF5 file
-		os.remove(NewModelDirectory + 'z{0:02d}_temp.npy'.format(iz))
+		os.remove(ModelDirectory + 'z{0:02d}_temp.npy'.format(iz))
 
 	ModelFile.close()
 	# ========================================================
@@ -1090,7 +1096,7 @@ def summarize_models():
 		print('No existing models found.')
 		return []
 	for ModelDir in ModelDirList:
-		ModelID = np.int(os.path.basename(ModelDir)[-2:])		
+		ModelID = int(os.path.basename(ModelDir)[-2:])		
 		ModelFile = ModelDir+'/{0:2d}.fortesmodel.hdf5'.format(ModelID)
 		Model = h5py.File(ModelFile,'r')
 		ModelDesc = Model.attrs['Description']
@@ -1210,7 +1216,7 @@ def test_model_registration(read_module, parameters, scale_parameter_name, \
 			raise ValueError('No filter files found')
 			return []
 		for filterfile in FilterFileList:
-			filterid = np.int(os.path.basename(filterfile).split('.')[0])
+			filterid = int(os.path.basename(filterfile).split('.')[0])
 			filter = FortesFit_Filters.FortesFit_Filter(filterid)
 			FilterList.append(filter)
 	else:
@@ -1245,7 +1251,7 @@ def test_model_registration(read_module, parameters, scale_parameter_name, \
 	for param in ShapeParamNames:
 		ShapeParamPoints.append(len(parameters[param]))
 	print('This model has {0:<d} shape parameters, sampled at a total of {1:<d} pivot points'.\
-		   format(len(ShapeParamNames),np.int(np.prod(ShapeParamPoints))))
+		   format(len(ShapeParamNames),int(np.prod(ShapeParamPoints))))
 	
 	# Do a trial readin and filter application for the model script with the first filter in the list. 
 	# If this fails, halt registration and return.
@@ -1338,7 +1344,7 @@ def register_model_unparallel(read_module, parameters, scale_parameter_name, \
 			raise ValueError('No filter files found')
 			return []
 		for filterfile in FilterFileList:
-			filterid = np.int(os.path.basename(filterfile).split('.')[0])
+			filterid = int(os.path.basename(filterfile).split('.')[0])
 			filter = FortesFit_Filters.FortesFit_Filter(filterid)
 			FilterList.append(filter)
 	else:
@@ -1382,7 +1388,7 @@ def register_model_unparallel(read_module, parameters, scale_parameter_name, \
 			ShapeParamPoints.append(len(parameters[param]))
 		if not silent: 
 			print('This model has {0:<d} shape parameters, sampled at a total of {1:<d} pivot points'.\
-			   format(len(ShapeParamNames),np.int(np.prod(ShapeParamPoints))))
+			   format(len(ShapeParamNames),int(np.prod(ShapeParamPoints))))
 
 	if not silent: 
 		ch = input('If this looks reasonable, continue by entering "y" : ')
