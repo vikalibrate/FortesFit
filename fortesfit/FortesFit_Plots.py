@@ -29,7 +29,7 @@ class FortesFitResult:
 	""" Representation of the FORTES-FIT MCMC output for a single object """
 	
 	
-	def __init__(self,FortesFit_OutFile, BurnIn = 10000, old=False):
+	def __init__(self,FortesFit_OutFile, BurnIn = 0, old=False):
 		""" Read in the FORTES-FIT MCMC outputs for a single object 
 			
 			FortesFit_OutFile: The output HDF5 file of FortesFit_FitSingle_emcee
@@ -137,7 +137,7 @@ class FortesFitResult:
 
 # ***********************************************************************************************
 
-def	SummaryFigures(FortesFit_OutFile, BurnIn=10000, old=False):
+def	SummaryFigures(FortesFit_OutFile, BurnIn = 0, old=False):
 	""" Plot the chains, corner plot and model SEDs for a ForteFit output
 		
 		FortesFit_Outfile:  HDF5 file with the outputs from FortesFit
@@ -207,7 +207,7 @@ def	SummaryFigures(FortesFit_OutFile, BurnIn=10000, old=False):
 		
 	return chainfig
 
-def plot_corner(FortesFit_OutFile, cornerfig, BurnIn=10000, old=False):
+def plot_corner(FortesFit_OutFile, cornerfig, BurnIn = 0, old=False):
 
 	fitresult = FortesFitResult(FortesFit_OutFile, BurnIn=BurnIn,old=old)
 	print(fitresult.fit_description)	
@@ -246,7 +246,7 @@ def plot_corner(FortesFit_OutFile, cornerfig, BurnIn=10000, old=False):
 
 # ***********************************************************************************************
 
-def	PlotModelSEDs(FortesFit_OutFile, scaled_models, filter_scaling, wave_range = [1e-1,1e3], BurnIn=10000, PDF_File='', 
+def	PlotModelSEDs(FortesFit_OutFile, scaled_models=None, filter_scaling=None, wave_range = [1e-1,1e3], BurnIn = 0, PDF_File='', 
 	Nsamps=100, silent=False, old=False, legend=True, sedfig=None, ax=None):
 	""" Plot the best-fit combined SED, model photometry. 
 		From Nsamps SEDs drawn from the joint posterior, get the error SEDs for each component and overplot.
@@ -259,6 +259,12 @@ def	PlotModelSEDs(FortesFit_OutFile, scaled_models, filter_scaling, wave_range =
 		silent: If True, no information messages are used. Serial plots are shown for 2 seconds.
 	
 	"""		
+
+	if scaled_models is None:
+		scaled_models = []
+
+	if filter_scaling is None:
+		filter_scaling = {}
 	
 	# Initialise PDF output if necessary
 	if len(PDF_File) > 0:
@@ -415,7 +421,7 @@ def	PlotModelSEDs(FortesFit_OutFile, scaled_models, filter_scaling, wave_range =
 
 # ***********************************************************************************************
 
-def	PlotPosteriors(FortesFit_OutFile, BurnIn=10000, old=False):
+def	PlotPosteriors(FortesFit_OutFile, BurnIn = 0, old=False):
 	""" Plot the posterior distributions for the parameters, with the priors shown for comparison
 		
 		FortesFit_Outfile:  HDF5 file with the outputs from FortesFit
@@ -520,7 +526,7 @@ def	PlotPosteriors(FortesFit_OutFile, BurnIn=10000, old=False):
 # ***********************************************************************************************
 
 #  Needs development
-def		FortesFit_BestModelSED(FortesFit_OutFile, BurnIn=10000, wave_range = [1e-2,1e4],Nsamps=100):
+def		FortesFit_BestModelSED(FortesFit_OutFile, BurnIn = 0, wave_range = [1e-2,1e4],Nsamps=100):
 	""" Returns the best-fit SED components
 		
 		FortesFit_Outfile:  HDF5 file with the outputs from FortesFit

@@ -9,7 +9,8 @@ from scipy.optimize import minimize
 from fortesfit import FortesFit_Settings
 from fortesfit import FortesFit_Filters
 from fortesfit import FortesFit_ModelManagement
- 
+
+
 """ A module with functions that are used by the model fitting routines in FortesFit 
 
 	This version is written with EMCEE as the engine, using the first working versions of the model and filter routines.

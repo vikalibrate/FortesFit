@@ -3,7 +3,7 @@ from setuptools import setup
 setup(name='fortesfit',
       version='2.0.0',
       install_requires=['numpy','scipy','matplotlib',
-                        'astropy','emcee','h5py','corner'],
+                        'astropy','emcee','h5py','corner','tqdm'],
       description='Flexible SED fitting for astrophysics',
       url='http://github.com/vikalibrate/FortesFit',
       author='David Rosario, Devang Liya',
