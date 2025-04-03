@@ -32,8 +32,11 @@ You will need to do the following initial setup before you can use FortesFit for
 Once the setup is successful, the user writes a Python program that incorporates FortesFit classes and functions to set up the data, models, priors, engine, and output for a fit. A typical workflow is given [below](#Basic-fitting-workflow).
 
 ## Using FortesFit
-### Examples and additional resources
-A number of resources related to FortesFit can be found in [this repository](https://github.com/DevangLiya/fortesfit_resources). Some of the things included in the repository are tutorials (in form of jupyter notebooks), demonstrations of advanced features, pre-made models and filters.
+### Features
+  - **Full control on filters and models**. This makes it easy to add any filters or your own models! You are also free to define the model parameters as you please. However, this can be daunting at first, please refer to [examples repository](https://github.com/DevangLiya/fortesfit_resources) for pre-packaged models.
+  - **Model dependencies** allow users to define quantities derived from the original model parameters. These dependencies can then be used to set priors or even tie together fluxes from different filters.
+  - **Choice of fitting engine** through ```FortesFit_Preparation``` module. At present, FortesFit offers an MCMC engine from the [EMCEE package](https://emcee.readthedocs.io/en/stable/), and nested sampling engine MultiNest through [PyMultinest](https://johannesbuchner.github.io/PyMultiNest/). (Note: MultiNest needs to be installed seperately by the user.)
+  - **Full control on priors** by specifying your own prior in form of probability density function.
 
 ### Basic fitting workflow
 A basic FortesFit workflow may look like following
@@ -45,11 +48,8 @@ A basic FortesFit workflow may look like following
   6. Run the fit using routines in ```FortesFit_Fitting```.
   7. Examin the fit results using routines in ```FortesFit_Plots``` and ```FortesFit_Parsers```.
 
-### Features
-  - **Full control on filters and models**. This makes it easy to add any filters or your own models! You are also free to define the model parameters as you please. However, this can be daunting at first, please refer to [examples repository](https://github.com/DevangLiya/fortesfit_resources) for pre-packaged models.
-  - **Model dependencies** allow users to define quantities derived from the original model parameters. These dependencies can then be used to set priors or even tie together fluxes from different filters.
-  - **Choice of fitting engine** through ```FortesFit_Preparation``` module. At present, FortesFit offers an MCMC engine from the [EMCEE package](https://emcee.readthedocs.io/en/stable/), and nested sampling engine MultiNest through [PyMultinest](https://johannesbuchner.github.io/PyMultiNest/). (Note: MultiNest needs to be installed seperately by the user.)
-  - **Full control on priors** by specifying your own prior in form of probability density function.
+### Tutorials, examples and additional resources
+A number of resources related to FortesFit can be found in [this repository](https://github.com/DevangLiya/fortesfit_resources). Some of the things included in the repository are tutorials (in form of jupyter notebooks), demonstrations of advanced features, pre-made models and filters.
  
 ## Who has used FortesFit?
   - The infra-red SEDs of nearby AGN from 1-1000 um with stellar, AGN and SF-heated dust components (Rosario+ 2017)
