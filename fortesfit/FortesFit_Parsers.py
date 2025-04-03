@@ -177,3 +177,6 @@ def	get_bestfit_fluxes(FortesFit_OutFile, BurnIn=0, scaled_models=None, filter_s
 # 		modelFluxes[ifilt] = np.median(sample_photometry[:,ifilt])
 
 # 	return (plotfluxes, FilterWave[index]), (modelFluxes, FilterWave), (BestFitFlux, ObsWave)
+
+# def get_fitsummary: best-fit values, number of chains etc
+# def get_posterior: take parameter name and output posterior distribution

@@ -54,7 +54,6 @@ def	FortesFit_FitSingle(datacollection, modelcollection, fitfile, **kwargs):
 		allsamples = FortesFit_multinest(varying_indices, datacollection, modelcollection, **kwargs)
 		flatchain = allsamples.get_equal_weighted_posterior()[:,0:-1]
 		paramnames = np.core.defchararray.decode(fitfile['Chain/Varying_parameters'][()])
-		save_diagnosis_json_plot(analyzer_object=allsamples, paramnames=paramnames, sourceid=f'{datacollection.id}')
 		Multinest_cleanup(**kwargs)	
 	else:
 		raise ValueError('Fitting Method not recognised')
@@ -209,62 +208,3 @@ def	FortesFit_FitSingle_MLE(Fluxes, FluxErrors, Redshift, Filters, Models, Param
 		print('MLE unsuccessful. Use default priors.')
 	
 	return mleresult
-
-	
-
-#==========================================================================================
-#								Dev code
-#==========================================================================================
-def save_diagnosis_json_plot(analyzer_object, paramnames, sourceid=None):
-	if sourceid is None: sourceid = 'sourceid'
-
-	import numpy
-	from numpy import exp, log
-	import matplotlib.pyplot as plt
-	import sys, os
-	import json
-	import pymultinest
-
-	# code from dynesty (MIT licensed)
-	from six.moves import range
-
-	import logging
-	import types
-	import math
-	import numpy as np
-	import matplotlib.pyplot as pl
-	from matplotlib.ticker import MaxNLocator, NullLocator
-	from matplotlib.colors import LinearSegmentedColormap, colorConverter
-	from matplotlib.ticker import ScalarFormatter
-	from scipy import spatial
-	from scipy.ndimage import gaussian_filter as norm_kde
-	from scipy.stats import gaussian_kde
-
-	s = analyzer_object.get_stats()
-	with open(f'stats/{sourceid}_stats.json', 'w') as jsonfh:
-		json.dump(s, jsonfh, indent=4)
-
-	print('creating marginal plot ...')
-	data = analyzer_object.get_data()
-	i = data[:,1].argsort()[::-1]
-	samples = data[i,2:]
-	weights = data[i,0]
-	loglike = data[i,1]
-	Z = s['global evidence']
-	logvol = np.log(weights) + 0.5 * loglike + Z
-	logvol = logvol - logvol.max()
-
-	#plt.plot(-0.5 * loglike, logvol, 'x ')
-	#plt.savefig('weights.pdf', bbox_inches='tight')
-	#plt.close()
-
-	results = dict(samples=samples, weights=weights, logvol=logvol)
-
-	pymplotting.traceplot(results, labels=paramnames, show_titles=True)
-	plt.savefig(f'traces/{sourceid}_trace.png', bbox_inches='tight')
-	plt.close()
-
-	pymplotting.cornerplot(results, labels=paramnames, show_titles=True)
-	plt.savefig(f'corners/{sourceid}_corner.png', bbox_inches='tight')
-	plt.close()
-	

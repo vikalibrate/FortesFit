@@ -776,6 +776,7 @@ def register_model(read_module, parameters, scale_parameter_name, description, f
 	ModelFile.close()
 	# ========================================================
 
+	summarize_models()
 	return NewID
 
 def add_filter_to_model(ModelID, FilterIDs, n_processes=1):
@@ -927,6 +928,7 @@ def add_filter_to_model(ModelID, FilterIDs, n_processes=1):
 	ModelFile.close()
 	# ========================================================
 
+	summarize_models()
 	return ModelID
 
 # ======================================== End of dev code ======================================
@@ -1050,18 +1052,28 @@ def add_model_dependency(ModelID, dependency_function, dependency_name=''):
 # ***********************************************************************************************
 
 def print_model_info(modellist):
-	""" Print a summary of information from a list of models to stdout
+	""" 
+	Print a summary for given model(s)
 		
-		modellist: list (or list-like iterable) of FortesFit model IDs	
-	"""
+	Input:
+	----
+	modellist: (int or list) of FortesFit model IDs	
 
-	print('There are {0:<2d} individual models for this fit'.format(len(modellist)))
+	Return:
+	----
+	Print the summary and return 0
+	"""
+	if isinstance(modellist, int):
+		modellist = [modellist]
+
+	print(f'Summarising {len(modellist)} individual model(s).')
 	
 	for imodel, modelid in enumerate(modellist):
 
 		# Create a FortesFit FullModel instance
 		model = FullModel(modelid)
-		print('{0:<2d}  ID: {1:<2d}  {2:}'.format(imodel+1,model.modelid,model.description))
+		print('{0:<2d}  ID: {1:<2d}'.format(imodel + 1, model.modelid))
+		print(f'    Model description: {model.description}')
 	
 		# Obtain the names of all the parameters in order of the model, scale parameter, then shape parameters
 		parameter_names = []
@@ -1073,9 +1085,13 @@ def print_model_info(modellist):
 		print('    Parameters:',end=" ")
 		for param in parameter_names:
 			print(param+'  ',end='')
+
+		print(f'\n    Valid wavelength range: {model.wave_range} micron')
+		print(f'    Valid redshift range: [{model.pivot_redshifts[0]:.3f}, {model.pivot_redshifts[-1]:.3f}]')
+		print(f'    Valid filter IDs: {model.filterids}')
 		print(' ')	
 	
-	return
+	return 0
 
 # ***********************************************************************************************
 
