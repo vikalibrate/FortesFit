@@ -2,6 +2,7 @@ from setuptools import setup
 
 setup(name='fortesfit',
       version='2.0.0',
+      python_requires='>=3.9',
       install_requires=['numpy>=1.2','scipy<=1.13','matplotlib',
                         'astropy','emcee','h5py','corner','tqdm'],
       description='Flexible SED fitting for astrophysics',
