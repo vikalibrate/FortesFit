@@ -41,18 +41,30 @@ class FortesFitResult:
 
 		self.objectname = FitFile.attrs['Object Name'].decode()
 		self.fit_description = FitFile.attrs['Description'].decode()
-			
-		priors = OrderedDict()  #  A dictionary that stores priors for all parameters, including redshift
-			
-		# Object specific attributes		
-		priors.update({'Redshift':FitFile.attrs['Redshift']})   
+		self.burn_in = BurnIn
 
 		self.fit_filterids = FitFile['Photometry/FilterIDs'][()] # Filters of the SED used in the fit
+		self.obs_waves = np.array([FortesFit_Filter(filterid).pivot_wavelength for filterid in self.fit_filterids])
 		self.fit_fluxes = FitFile['Photometry/Fluxes'][()] # Filters of the SED used in the fit
 		self.fit_fluxerrors = FitFile['Photometry/FluxErrors'][()] # Errors on the fluxes in erg/s/cm^2/micron
 
 		# Basic attributes about the overall fits, from the main file metadata
 		self.fit_modelids  = FitFile['Model'].attrs['ModelIDs']  # Models used to fit the SED
+
+		try:
+			self.scaled_models = FitFile.attrs['scaled_models']
+			self.filter_scaling = {int(filterid): scaling_constant[()] 
+			for filterid, scaling_constant in FitFile['filter_scaling'].items()}
+		except KeyError:
+			# this file is from version below v2 of FortesFit, set both to None
+			self.scaled_models = None
+			self.filter_scaling = None
+
+		# ---------- extract priors ----------
+		priors = OrderedDict()  #  A dictionary that stores priors for all parameters, including redshift
+
+		# Object specific attributes		
+		priors.update({'Redshift':FitFile.attrs['Redshift']}) 
 
 		for modelid in self.fit_modelids:
 			subgroupname = 'Model/Model{0:2d}'.format(modelid)
@@ -61,27 +73,28 @@ class FortesFitResult:
 				priors.update({uparam:FitFile[dataname][()]})
 		
 		self.priors = priors
-		paramnames = np.array(list(priors.keys()))	
+		# ------------------------------------
+
+		paramnames = np.array(list(priors.keys()))
 		
-		self.fit_parameter_names  = np.core.defchararray.decode(FitFile['Chain/Varying_parameters'][()]) # Ordered list of parameters that were fit
-		matchindex = np.zeros(len(self.fit_parameter_names),dtype='i2')
+		# Ordered list of parameters that were fit
+		self.fit_parameter_names = np.core.defchararray.decode(FitFile['Chain/Varying_parameters'][()]) 
+		matchindex = np.zeros(len(self.fit_parameter_names), dtype='i2')
 		for iparam,param in enumerate(self.fit_parameter_names):
 			index, = np.where(paramnames == param)
 			matchindex[iparam] = index[0]
 		self.fit_parameter_indices = matchindex
-		
-		self.burn_in = BurnIn
 
 		if old:
 			tempchains  = FitFile['Chain/emcee_chain'][()]
 			self.chains = tempchains.reshape((tempchains.shape[0]*tempchains.shape[1],tempchains.shape[2]),order='F')
 #			self.chains = tempchains.reshape((-1,len(self.fit_parameter_names)))  #  Store the entire EMCEE output chain
 			self.all_samples = self.chains[BurnIn:,:]
-		else:	
+		else:
 			self.chains = FitFile['Chain/posterior_chain'][()]  #  Store the entire posterior output chain
 			self.all_samples = self.chains[BurnIn:,:]
 		# Future: add a warning here in case chains are too short for reasonable statistics of posterior PDF
-				
+
 		FitFile.close()  #  Close the HDF5 output file
 		
 		# Use marginalised posterior PDF to calculate Kullback-Leibler Divergence wrt priors of fitted parameters
@@ -102,7 +115,7 @@ class FortesFitResult:
 #			posteriors.update({param:np.stack([post_x,post_y])})
 #			posteriors.update({param:process_PDF(np.stack([post_x,post_y]))})
 #		self.marginalised_posteriors = posteriors
-			
+
 
 		# Best-fit or fixed values for each parameter
 		perc_pars = {}
@@ -133,6 +146,76 @@ class FortesFitResult:
 			perc_pars.update({param:np.percentile(self.all_samples[:,iparam],Quantiles)})
 		
 		return perc_pars
+
+
+	def get_fit_into(self):
+		"""
+		Return all the vital fit information in a clean format
+
+		Output:
+		----
+		A dictionary with following keys
+		observed_wavelength : (1D array) wavelength of all observed points in observed frame
+		observed_flux		: (dict) observed data converted to vFv (erg s-1 cm-2) units
+									'flux': flux, 'error': error (as supplied by the user)
+		model_flux			: (2D array) model flux evaluated at the best-fit values of parameters in vFv units
+									return N + 1 column where N is number of model components in the fit
+									first N columns contain fluxes for individual components
+									last column is the total model flux
+		fit_parameters 		: (dict) median and 1sigma spread on either side for all model parameters
+									dictionary is structured as follows,
+									{modelID_parameter_name: array(1sigma lower, median, 1sigma higher)}
+									all three values are identical for fixed parameters
+		redshift 			: (float) redshift of the source
+
+		# !!! WARNING !!!
+		# This will break when redshift is a free parameter
+		# But this should never be reached as strongly advice against using FortesFit to fit redshift
+		# TODO: Make it not break
+		"""
+
+		# get percentiles for all free parameters
+		parameter_percentiles = self.percentiles()
+
+		# add any fixed parameters, excluding redshift (returned separately)
+		for paramname, value in self.bestfit_parameters.items():
+			if (value[1] == 'Fixed') and (paramname != 'Redshift'):
+				parameter_percentiles[paramname] = np.array(3*[value[0]]) # homogenize format
+			else:
+				continue
+
+		# ------------- best-fit model flux ---------------
+		# 1. read model
+		# 2. evaluate at best-fit values and for given filters
+		# 3. return the flux
+
+		# Create a list of model parameter dictionaries with best-fit/fixed parameter values
+		# These will be changed when processing the individual model SEDs
+		paramdict_plot = [{} for imodel in range(len(self.fit_modelids))]
+		for param in self.bestfit_parameters.keys():
+			for imodel, modelid in enumerate(self.fit_modelids):
+				if param[0:2] == '{0:2d}'.format(modelid):
+					paramdict_plot[imodel].update({param[3:]:self.bestfit_parameters[param][0]})
+
+		besfit_fluxes = np.zeros((len(self.fit_filterids), len(self.fit_modelids) + 1))
+
+		for imodel, modelid in enumerate(self.fit_modelids):
+			if (self.scaled_models is not None) and (modelid in self.scaled_models):
+				fitmodel = FitModel(modelid, self.redshift, self.fit_filterids, filter_scaling=self.filter_scaling)
+			else:
+				fitmodel = FitModel(modelid, self.redshift, self.fit_filterids, filter_scaling=None)
+
+			for ifilt, filterid in enumerate(self.fit_filterids):
+				besfit_fluxes[ifilt, imodel] = 3.63e-5*10**(fitmodel.evaluate(paramdict_plot[imodel], 
+					self.redshift, filterid))*self.obs_waves[ifilt]
+
+		besfit_fluxes[:, -1] = np.sum(besfit_fluxes, axis=1)
+
+		return {'observed_wavelength': self.obs_waves, 
+				'observed_flux': {'flux': self.obs_waves*self.fit_fluxes, 'error': self.obs_waves*self.fit_fluxerrors},
+				'model_flux': besfit_fluxes,
+				'fit_parameters': parameter_percentiles,
+				'redshift': self.redshift}
 
 
 # ***********************************************************************************************
