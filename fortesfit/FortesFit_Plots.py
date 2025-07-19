@@ -528,6 +528,8 @@ def	PlotPosteriors(FortesFit_OutFile, BurnIn = 0, old=False):
 	ObjectName = fitresult.objectname 
 
 	bestfit_parameters = fitresult.bestfit_parameters
+
+	all_figures = []
 	
 	if bestfit_parameters['Redshift'][1] == 'Fit':
 		# A single plot just for redshift
@@ -545,10 +547,12 @@ def	PlotPosteriors(FortesFit_OutFile, BurnIn = 0, old=False):
 		ax.axis([plotrange[0],plotrange[1],0,1])
 		ax.tick_params(axis='y',left=False)		
 		ax.set_title('Redshift')
+
+		all_figures.append(fig)
 		plt.show()
 
 		ch = input('Continue with more models? y or n : ')
-		if ch == 'n': return
+		if ch == 'n': return all_figures
 
 	for modelid in fitresult.fit_modelids:
 
@@ -609,11 +613,13 @@ def	PlotPosteriors(FortesFit_OutFile, BurnIn = 0, old=False):
 				ax.tick_params(axis='both',bottom=False,labelbottom=False,left=False,labelleft=False)		
 				ax.set_title(uparam[3:])
 	
+		all_figures.append(fig)
 		plt.show()
-		ch = input('Continue with more models? y or n : ')
-		if ch == 'n': return
 
-	return 0
+		ch = input('Continue with more models? y or n : ')
+		if ch == 'n': return all_figures
+
+	return all_figures
 
 # ***********************************************************************************************
 
