@@ -362,7 +362,7 @@ class CollectModel:
 		FortesFit.
 	"""
 	
-	def __init__(self,modellist,priordists,datacollection):
+	def __init__(self,modellist,priordists,datacollection,scaled_models=None,filter_scaling=None):
 		""" Initialise the FortesFit model representation for a user-provided object
 			
 			modellist: list-like, the FortesFit ids of models in arbitrary order
@@ -381,7 +381,12 @@ class CollectModel:
 						information about the filters, redshifts and photometry to be fit.
 										
 		"""
-			
+		
+		if scaled_models is None:
+			scaled_models = []
+		if filter_scaling is None:
+			filter_scaling = {}
+
 		# Determine the redshift range, or fitting redshift if a single value
 		if datacollection.redshift.fixed:
 			redshift_range = datacollection.redshift.characteristic
@@ -399,8 +404,11 @@ class CollectModel:
 
 		for imodel in range(len(modellist)):
 
-			# Read in a model to a FortesFit FitModel instance	
-			model = FitModel(modellist[imodel],redshift_range,filterids)
+			# Read in a model to a FortesFit FitModel instance
+			if modellist[imodel] in scaled_models:
+				model = FitModel(modellist[imodel],redshift_range,filterids,filter_scaling=filter_scaling)
+			else:
+				model = FitModel(modellist[imodel],redshift_range,filterids,filter_scaling=None)
 			priordist = priordists[imodel]
 			
 			# Process the prior distributions for each parameter and save
@@ -416,7 +424,7 @@ class CollectModel:
 
 			prior = priordist[parameter_name]
 			if np.size(prior) == 1:
-				if type(prior).__name__ == 'rv_frozen':
+				if type(prior).__name__ == 'rv_continuous_frozen':
 					# A frozen Scipy rvs_continuous instance. Will raise its own exception if it isn't properly set.
 					# Consider a range where the CDF goes from 1e-6 to 1 - 1e-6
 					xrange = [prior.ppf(1e-6),prior.ppf(1.0-1e-6)]
@@ -442,7 +450,7 @@ class CollectModel:
 					# A prior has been provided by the user
 					prior = priordist[parameter_name]				
 					if np.size(prior) == 1:
-						if type(prior).__name__ == 'rv_frozen':
+						if type(prior).__name__ == 'rv_continuous_frozen':
 							# A frozen Scipy rvs_continuous instance. Will raise its own exception if it isn't properly set.
 							# Consider a range where the CDF goes from 1e-6 to 1 - 1e-6
 							xrange = [prior.ppf(1e-6),prior.ppf(1.0-1e-6)]
@@ -486,7 +494,7 @@ class CollectModel:
 					# A prior has been provided by the user for this dependency
 					prior = priordist[dependency_name]				
 					if np.size(prior) == 1:
-						if type(prior).__name__ == 'rv_frozen':
+						if type(prior).__name__ == 'rv_continuous_frozen':
 							# A frozen Scipy rvs_continuous instance. Will raise its own exception if it isn't properly set.
 							# Consider a range where the CDF goes from 1e-6 to 1 - 1e-6
 							xrange = [prior.ppf(1e-6),prior.ppf(1.0-1e-6)]
@@ -562,6 +570,8 @@ class CollectModel:
 		self.models = Models
 		self.number_of_parameters = NParams
 		self.priors = PriorDists
+		self.scaled_models = scaled_models
+		self.filter_scaling = filter_scaling
 
 		# Compile a list of parameter references, including redshift. 
 		# This order will be used for all further calls to likelihood, prior and sampling functions.
@@ -622,6 +632,10 @@ def prepare_output_file(datacollection,modelcollection,fitengine,OutputPath=None
 	FitFile.attrs.create("Description",description,dtype=np.dtype('S{0:3d}'.format(len(description))))
 			
 	FitFile.attrs.create("Redshift",datacollection.redshift.prior_grid) # Store the redshift used for the fit
+	FitFile.attrs.create("scaled_models", modelcollection.scaled_models)
+	filter_scaling_group = FitFile.create_group("filter_scaling")
+	for filterid, scaling_constant in modelcollection.filter_scaling.items():
+		filter_scaling_group[str(filterid)] = scaling_constant
 
 	# Store the photometry in a group within the file
 	photometry = FitFile.create_group("Photometry")
@@ -725,7 +739,7 @@ def examine_priors(modelcollection):
 
 				# Reasonable ticks (4 per parameter)
 				xticks = ax.get_xticks()
-				nskip = np.int(len(xticks)/3)
+				nskip = int(len(xticks)/3)
 				ax.set_xticks(xticks[1::nskip])
 				ax.tick_params(axis='x',labelsize='medium')
 				ax.tick_params(axis='y',left=False,labelleft=False)		

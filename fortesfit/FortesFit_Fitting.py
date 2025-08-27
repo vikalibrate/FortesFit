@@ -10,7 +10,7 @@ from fortesfit import FortesFit_Settings
 from fortesfit import FortesFit_Filters
 from fortesfit import FortesFit_ModelManagement
 
- 
+
 """ A module with functions that are used by the model fitting routines in FortesFit 
 
 	This version is written with EMCEE as the engine, using the first working versions of the model and filter routines.
@@ -53,7 +53,8 @@ def	FortesFit_FitSingle(datacollection, modelcollection, fitfile, **kwargs):
 		from fortesfit.FortesFit_multinest import FortesFit_multinest, Multinest_cleanup
 		allsamples = FortesFit_multinest(varying_indices, datacollection, modelcollection, **kwargs)
 		flatchain = allsamples.get_equal_weighted_posterior()[:,0:-1]
-		Multinest_cleanup(**kwargs)			
+		paramnames = np.core.defchararray.decode(fitfile['Chain/Varying_parameters'][()])
+		Multinest_cleanup(**kwargs)	
 	else:
 		raise ValueError('Fitting Method not recognised')
 		return False
@@ -207,5 +208,3 @@ def	FortesFit_FitSingle_MLE(Fluxes, FluxErrors, Redshift, Filters, Models, Param
 		print('MLE unsuccessful. Use default priors.')
 	
 	return mleresult
-
-	

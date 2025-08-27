@@ -111,7 +111,7 @@ def register_filter(wavelength, throughput, format='photon', reference='User', d
 		print('You are registering your first filter. Exciting!')
 	OldIDs = []
 	for OldFile in OldFilterFiles:
-		OldIDs.append(np.int(os.path.basename(OldFile).split('.')[0]))
+		OldIDs.append(int(os.path.basename(OldFile).split('.')[0]))
 	OldIDs = np.array(OldIDs,dtype=int)		
 
 	# Assign a random and unique 6 digit number for the new filter.
@@ -235,7 +235,7 @@ def summarize_filters():
 		print('No existing filters found.')
 		return []
 	for FilterFile in FilterFileList:
-		FilterID = np.int(os.path.basename(FilterFile).split('.')[0])
+		FilterID = int(os.path.basename(FilterFile).split('.')[0])
 		Filter = FortesFit_Filter(FilterID)
 		FilterFormat = Filter.format
 		FilterDesc = Filter.description
@@ -245,5 +245,18 @@ def summarize_filters():
 	summary_table.sort('pivot wavelength')
 	summary_table.write(FortesFit_Settings.FilterDirectory+'FortesFit_filters_summary.ascii',
 						format='ascii.fixed_width_two_line',overwrite=True)
-	
-	
+
+# ***********************************************************************************************
+
+def delete_filter(filterID):
+	'''
+	Delete a filter and update the filter list (FortesFit_filters_summary.ascii)
+
+	filterID: int, Fortes filter ID
+	'''
+	filter_filename = f'{FortesFit_Settings.FilterDirectory}{filterID}.fortesfilter.xml'
+	try:
+		os.remove(filter_filename)
+		summarize_filters()
+	except:
+		raise ValueError(f'Filter not found. Make sure you have setup the environment variable FORTESFITPATH and the filter ID ({filterID}) is correct.')
