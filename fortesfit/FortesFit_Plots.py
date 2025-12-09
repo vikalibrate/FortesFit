@@ -697,3 +697,91 @@ def		examine_model_seds(ModelID, nsamples=3, filterids=[], wave_range = [1e-2,1e
 	return sedfig
 
 #*******************************************************************
+
+####################################################################
+# Experimental code
+####################################################################
+
+def plot_samples_from_prior(data, models, n_samples=20, plot_model_components=False, random_seed=None):
+	"""
+	Plot n_samples randomly sampled points from the prior distribution
+	This is useful to quickly understand the SED range covered by priors
+	Within Bayesian workflow, this is known as "prior predictive checks"
+
+	Parameters:
+	----
+	data: FortesFit_Preparation.CollectData instance
+	models: FortesFit_Preparation.CollectModel instance
+	n_samples: (int) number of random samples to draw from each prior
+	plot_model_components: (bool) whether to plot individual model
+							components. plot only total SED if False
+
+	Returns:
+	----
+	figure
+	"""
+	if random_seed is not None:
+		np.random.seed(random_seed)
+
+	n_interpolation_points = 200
+
+	# get observed data and convert to vFv units
+	data_wavelength = data.pivot_wavelengths
+	data_fluxes = data.pivot_wavelengths*data.fluxes
+
+	# determine plot limits and interpolation grid
+	x_lims = (data_wavelength.min() - data_wavelength.min()*0.2, data_wavelength.max() + data_wavelength.max()*0.2)
+	y_lims = (data_fluxes.min() - data_fluxes.min()*0.8, data_fluxes.max() + data_fluxes.max()*0.8)
+	sed_interpolation_grid = np.logspace(np.log10(x_lims[0]), np.log10(x_lims[1]), n_interpolation_points)
+
+	# create empty array to hold sampled SEDs, set up figure
+	sampled_seds = np.zeros(shape=(len(models.models), n_samples, n_interpolation_points))
+	fig, ax = plt.subplots()
+
+	# generate random SEDs
+	for i_model, tmp_model in enumerate(models.models):
+	    # model ID
+	    current_modelID = tmp_model.modelid
+
+	    # read SEDs of the model and prepare parameters
+	    current_model = FullModel(current_modelID, sed_readin=True)
+	    current_model_paramnames = np.append(current_model.shape_parameter_names, 
+	                                         current_model.scale_parameter_name)
+
+	    for i_sample in range(n_samples):
+	        # draw random samples from prior
+	        current_prior_sample = {paramname: models.priors[i_model][paramname].draw_prior(1)[0] for paramname in\
+	                                current_model_paramnames}
+
+	        # get pivot SED for this sample
+	        current_sed = current_model.get_pivot_sed(current_prior_sample, redshift=data.redshift.characteristic)
+	        valid_flux_index = np.where(current_sed['observed_flux'] > 0.0)
+	        interpolated_current_sed = sed_interpolation_grid*(10**(np.interp(np.log10(sed_interpolation_grid), 
+	                                             np.log10(current_sed['observed_wavelength'][valid_flux_index]),
+	                                             np.log10(current_sed['observed_flux'][valid_flux_index]),
+	                                             left=-np.inf,right=-np.inf)))
+	        
+	        # save sampled SEDs in an array
+	        sampled_seds[i_model, i_sample, :] = interpolated_current_sed
+	        
+	        if plot_model_components:
+	            plt.plot(sed_interpolation_grid, 
+	                     interpolated_current_sed, 
+	                     lw=0.5, color=f'C{i_model}', alpha=0.5)
+
+
+	if not plot_model_components:
+	    # plot total SED
+	    plt.plot(sed_interpolation_grid, sampled_seds.sum(axis=0).T, lw=0.5, alpha=0.5, color='gray')
+	            
+	plt.errorbar(data.pivot_wavelengths, data.pivot_wavelengths*data.fluxes, yerr=data.flux_errors, fmt='ko')
+	plt.ylim(y_lims[0], y_lims[1])
+	plt.xlim(x_lims[0], x_lims[1])
+
+	plt.xlabel(r'Observed Wavelength ($\mu$m)', size='x-large')
+	plt.ylabel(r'$\nu$F$_{\nu}$ (erg s$^{-1}$ cm$^{-2}$)', size='x-large')
+	plt.title('Prior predictive check')
+	    
+	plt.loglog()
+
+	return fig
