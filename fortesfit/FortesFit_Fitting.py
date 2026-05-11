@@ -70,7 +70,7 @@ def	Bayesian_probability(varying_parameters,datacollection,modelcollection,varyi
 	"""  Obtains the sum of the log probabilities of likelihood and prior for the model
 
 		 varying_parameters: a list or array of parameter values. This is the only required parameter for EMCEE 
-						     or scipy.optimize.
+							 or scipy.optimize.
 		 datacollection: An FortesFit CollectData instance. See FortesFit_Preparation for details.
 		 modelcollection: An FortesFit CollectModel instance. See FortesFit_Preparation for details.
 		 varying_indices: A list of indices to the modelcollection.parameter_reference for the varying parameters.
@@ -116,17 +116,23 @@ def	Bayesian_probability(varying_parameters,datacollection,modelcollection,varyi
 		paramdict_list[imodel] = paramdict
 		parstart += modelcollection.number_of_parameters[imodel]		
 
+	# if some models are scaled, get the scaling constant which is always last parameter in the sample
+	if len(modelcollection.scaling) > 0:
+		scaling_c_val = parameter_vals[parstart]
+	else:
+		scaling_c_val = 1.0
+
 	# Calculate the likelihood
 	loglikelihood = Sawicki12_loglikelihood(redshift,\
 							  datacollection.filters,datacollection.fluxes,datacollection.flux_errors,datacollection.error_weights,\
-							  modelcollection.models,paramdict_list)
+							  modelcollection.models,paramdict_list,modelcollection.scaling,scaling_c_val)
 	
 	# Return the total log probability (likelihood*prior)
 	return loglikelihood + logprior	
 
 # ***********************************************************************************************
 
-def	Sawicki12_loglikelihood(redshift,filters,fluxes,flux_errors,error_weights,models,parameters):
+def	Sawicki12_loglikelihood(redshift,filters,fluxes,flux_errors,error_weights,models,parameters,model_scaling,scaling_constant):
 	"""	Obtains the likelihood of a given set of fluxes, as outlined in Sawicki 2012.
 
 		redshift: redshift of the object
@@ -144,7 +150,11 @@ def	Sawicki12_loglikelihood(redshift,filters,fluxes,flux_errors,error_weights,mo
 	modelFluxes = np.zeros(len(filters),dtype='f4')
 	for imodel,model in enumerate(models):
 		for i,filter in enumerate(filters):
-			modelFluxes[i] += 3.63e-5*10**(model.evaluate(parameters[imodel],redshift,filter.filterid))	# Include scaling from STMAG=0	
+			modelFluxes[i] += 3.63e-5*10**(model.evaluate(parameters[imodel],redshift,filter.filterid))	# Include scaling from STMAG=0
+			if model.modelid in model_scaling:
+				if filter.filterid in model_scaling[model.modelid]:
+					# apply scaling to this filter in this model
+					modelFluxes[i] *= scaling_constant
 	
 	loglike_det = 0.0
 	index, = np.where(flux_errors > 0.0) # Detections, supplied errors are positive
@@ -175,7 +185,7 @@ def	FortesFit_FitSingle_MLE(Fluxes, FluxErrors, Redshift, Filters, Models, Param
 		
 		Fluxes: The fluxes of the object in a set of bands. Units are erg/s/cm^2/micron.
 		FluxErrors: The flux errors in a set of bands with the same order as Fluxes. 
-                    If the Flux is a limit, the error = -1.0*significance of limit
+					If the Flux is a limit, the error = -1.0*significance of limit
 		Redshift: The best redshift of the object.  
 		Models:  A list of FortesFit_Model class instances that will be fit to the SED
 		Filters: A list of FortesFit_Filter class instances for which photometry exists. Must have the same order as Fluxes.

@@ -362,7 +362,7 @@ class CollectModel:
 		FortesFit.
 	"""
 	
-	def __init__(self,modellist,priordists,datacollection,scaled_models=None,filter_scaling=None):
+	def __init__(self,modellist,priordists,datacollection,scaling_dict=None):
 		""" Initialise the FortesFit model representation for a user-provided object
 			
 			modellist: list-like, the FortesFit ids of models in arbitrary order
@@ -381,11 +381,10 @@ class CollectModel:
 						information about the filters, redshifts and photometry to be fit.
 										
 		"""
-		
-		if scaled_models is None:
-			scaled_models = []
-		if filter_scaling is None:
-			filter_scaling = {}
+		# TODO: Remove scaled_models and filter_scaling for self.scaling = {modelID: filter_list}
+
+		if scaling_dict is None:
+			scaling_dict = {}
 
 		# Determine the redshift range, or fitting redshift if a single value
 		if datacollection.redshift.fixed:
@@ -405,10 +404,7 @@ class CollectModel:
 		for imodel in range(len(modellist)):
 
 			# Read in a model to a FortesFit FitModel instance
-			if modellist[imodel] in scaled_models:
-				model = FitModel(modellist[imodel],redshift_range,filterids,filter_scaling=filter_scaling)
-			else:
-				model = FitModel(modellist[imodel],redshift_range,filterids,filter_scaling=None)
+			model = FitModel(modellist[imodel],redshift_range,filterids)
 			priordist = priordists[imodel]
 			
 			# Process the prior distributions for each parameter and save
@@ -566,12 +562,13 @@ class CollectModel:
 			Models.append(model)
 			NParams.append(n_params)
 			PriorDists.append(priordict)
-		
+
+
 		self.models = Models
 		self.number_of_parameters = NParams
+		# TODO: ModelCollection.priors is used in examine_priors. add scaling there somehow
 		self.priors = PriorDists
-		self.scaled_models = scaled_models
-		self.filter_scaling = filter_scaling
+		self.scaling = scaling_dict
 
 		# Compile a list of parameter references, including redshift. 
 		# This order will be used for all further calls to likelihood, prior and sampling functions.
@@ -590,6 +587,39 @@ class CollectModel:
 					varyflag = False
 				else: varyflag = True
 				parameter_reference.append((param,imodel,PriorDists[imodel][param],varyflag))
+
+		# if scaling_dict has non-zero length, we need to apply scaling
+		# TODO: allow fixed scaling (for now this can be done with narrow prior)
+		if len(scaling_dict) > 0:
+			for _prior in priordists:
+				if "scaling_constant" in _prior:
+					scaling_prior_found = True
+					prior = _prior["scaling_constant"]
+					break
+				else:
+					scaling_prior_found = False
+
+			if not scaling_prior_found:
+				raise ValueError("You have opted to scale some models but not provided 'scaling_constant' in priors")
+
+			if np.size(prior) == 1:
+				if type(prior).__name__ == 'rv_continuous_frozen':
+					# A frozen Scipy rvs_continuous instance. Will raise its own exception if it isn't properly set.
+					# Consider a range where the CDF goes from 1e-6 to 1 - 1e-6
+					xrange = [prior.ppf(1e-6),prior.ppf(1.0-1e-6)]
+					prior_x = xrange[0] + np.arange(101)*(xrange[1]-xrange[0])/100.0
+					prior_y = prior.pdf(prior_x) # get the distribution using the PDF function
+					scaling_prior = PriorDistribution(np.stack((prior_x,prior_y),axis=0),Normalize=False)
+				else:					
+					# single value of prior, not suitable for a scale parameter
+					raise ValueError("scaling_constant needs a non-singular prior")
+			else:
+				if type(prior).__name__ == 'ndarray':
+					scaling_prior = PriorDistribution(prior)				
+				else:
+					raise ValueError("Incorrect prior format for 'scaling_constant'")
+
+			parameter_reference.append(("scaling_constant", -1, scaling_prior, True))
 		
 		self.parameter_reference = parameter_reference
 
@@ -632,10 +662,9 @@ def prepare_output_file(datacollection,modelcollection,fitengine,OutputPath=None
 	FitFile.attrs.create("Description",description,dtype=np.dtype('S{0:3d}'.format(len(description))))
 			
 	FitFile.attrs.create("Redshift",datacollection.redshift.prior_grid) # Store the redshift used for the fit
-	FitFile.attrs.create("scaled_models", modelcollection.scaled_models)
-	filter_scaling_group = FitFile.create_group("filter_scaling")
-	for filterid, scaling_constant in modelcollection.filter_scaling.items():
-		filter_scaling_group[str(filterid)] = scaling_constant
+	scaling_group = FitFile.create_group("scaling")
+	for scaled_mid, scaled_filt_l in modelcollection.scaling.items():
+		scaling_group[str(scaled_mid)] = np.array(scaled_filt_l)
 
 	# Store the photometry in a group within the file
 	photometry = FitFile.create_group("Photometry")

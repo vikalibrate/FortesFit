@@ -200,19 +200,15 @@ class FitModel:
 	"""
 	
 	
-	def __init__(self,ModelID,redshift,FilterIDs,filter_scaling=None):
+	def __init__(self,ModelID,redshift,FilterIDs):
 		""" Read in the FORTES-FIT version of the SED model for a given model ID, redshift, set of filters
 			
 			ModelID: are unique 2 digit positive integer that identifies the model	 
 			         The model must be registered with FORTES-FIT, or this step will exit throwing an exception.
 			redshift: Either a scalar redshift value or a two-element list-like with lower and upper redshifts in a range
 			FilterIDs: A list of filter IDs that will be read from the model database
-			filter_scaling: a dictionary with filter specific scaling constant identified by the filterID as key
 							
 		"""
-		
-		if filter_scaling is None:
-			filter_scaling = {}
 
 		self.modelid = ModelID
 		ModelDir = FortesFit_Settings.ModelPhotometryDirectory+'Model{0:2d}/'.format(ModelID)
@@ -278,13 +274,7 @@ class FitModel:
 		self.model_photometry = {}
 		# Create a dictionary with keys = filterIDs and containing a list of photometry cubes for each self.redshifts
 		for FilterID in FilterIDs:
-			if FilterID in filter_scaling:
-				cubelist = [np.squeeze(Model['z{0:02d}/{1:6d}'.format(index,FilterID)][:]) 
-				+ np.log10(filter_scaling[FilterID]) for index in zindex]
-			else:
-				# could have had this line outside if statement and scaled the entire thing only if needed. but that would have 
-				# reqiured making ```cubelist``` an array instead of list. idk if that would break something downstream.
-				cubelist = [np.squeeze(Model['z{0:02d}/{1:6d}'.format(index,FilterID)][:]) for index in zindex]
+			cubelist = [np.squeeze(Model['z{0:02d}/{1:6d}'.format(index,FilterID)][:]) for index in zindex]
 
 			self.model_photometry.update({FilterID:cubelist})
 			
