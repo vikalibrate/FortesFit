@@ -148,7 +148,7 @@ class FortesFitResult:
 		return perc_pars
 
 
-	def get_fit_into(self):
+	def get_fit_info(self):
 		"""
 		Return all the vital fit information in a clean format
 
