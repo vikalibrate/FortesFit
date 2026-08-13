@@ -52,9 +52,10 @@ class FortesFitResult:
 		self.fit_modelids  = FitFile['Model'].attrs['ModelIDs']  # Models used to fit the SED
 
 		try:
-			self.scaled_models = FitFile.attrs['scaled_models']
-			self.filter_scaling = {int(filterid): scaling_constant[()] 
-			for filterid, scaling_constant in FitFile['filter_scaling'].items()}
+			self.scaling = {int(filterid): scaling_constant[()] 
+			for filterid, scaling_constant in FitFile['scaling'].items()}
+			self.ap_scaling = {int(filterid): scaling_constant[()]
+			for filterid, scaling_constant in FitFile['ap_scaling'].items()}
 		except KeyError:
 			# this file is from version below v2 of FortesFit, set both to None
 			self.scaled_models = None
@@ -75,10 +76,11 @@ class FortesFitResult:
 		self.priors = priors
 		# ------------------------------------
 
-		paramnames = np.array(list(priors.keys()))
+		# TODO: scaling_constant is added by hand here. make it so that it is directly infered from prior
+		paramnames = np.array(list(priors.keys()) + ['scaling_constant'])
 		
 		# Ordered list of parameters that were fit
-		self.fit_parameter_names = np.core.defchararray.decode(FitFile['Chain/Varying_parameters'][()]) 
+		self.fit_parameter_names = FitFile['Chain/Varying_parameters'][()].astype(str)
 		matchindex = np.zeros(len(self.fit_parameter_names), dtype='i2')
 		for iparam,param in enumerate(self.fit_parameter_names):
 			index, = np.where(paramnames == param)
@@ -101,16 +103,18 @@ class FortesFitResult:
 		posteriors = OrderedDict()  #  A dictionary that stores marginalised posteriors for all parameters, including redshift
 		self.fit_parameter_KLD  = np.zeros(len(self.fit_parameter_names))
 		for iparam,param in enumerate(self.fit_parameter_names):
-			# Use a 30 bin histogram to obtain a marginalised distribution from the posterior samples
-			pdfhist = np.histogram(self.all_samples[:,iparam],bins=30)
-#			kde = gaussian_kde(pdfhist[0]) # Use KDE to get a smoothed version of the PDF that overcomes zero counts
-			post_x = 0.5*(pdfhist[1][0:-1]+pdfhist[1][1:])
-#			post_y = kde(post_x)
-			post_y = pdfhist[0]
-			prior = self.priors[param]
-			pk = post_y
-			qk = np.interp(post_x,prior[0,:],prior[1,:],left=0.0,right=0.0)
-			self.fit_parameter_KLD[iparam] = entropy(pk,qk=qk)
+			# TODO: remove this forced if condition
+			if param != 'scaling_constant':
+				# Use a 30 bin histogram to obtain a marginalised distribution from the posterior samples
+				pdfhist = np.histogram(self.all_samples[:,iparam],bins=30)
+	#			kde = gaussian_kde(pdfhist[0]) # Use KDE to get a smoothed version of the PDF that overcomes zero counts
+				post_x = 0.5*(pdfhist[1][0:-1]+pdfhist[1][1:])
+	#			post_y = kde(post_x)
+				post_y = pdfhist[0]
+				prior = self.priors[param]
+				pk = post_y
+				qk = np.interp(post_x,prior[0,:],prior[1,:],left=0.0,right=0.0)
+				self.fit_parameter_KLD[iparam] = entropy(pk,qk=qk)
 			
 #			posteriors.update({param:np.stack([post_x,post_y])})
 #			posteriors.update({param:process_PDF(np.stack([post_x,post_y]))})
@@ -201,9 +205,10 @@ class FortesFitResult:
 
 		for imodel, modelid in enumerate(self.fit_modelids):
 			if (self.scaled_models is not None) and (modelid in self.scaled_models):
-				fitmodel = FitModel(modelid, self.redshift, self.fit_filterids, filter_scaling=self.filter_scaling)
+				# TODO: adapt for scaling_dict and ap_scaling
+				fitmodel = FitModel(modelid, self.redshift, self.fit_filterids)
 			else:
-				fitmodel = FitModel(modelid, self.redshift, self.fit_filterids, filter_scaling=None)
+				fitmodel = FitModel(modelid, self.redshift, self.fit_filterids)
 
 			for ifilt, filterid in enumerate(self.fit_filterids):
 				besfit_fluxes[ifilt, imodel] = 3.63e-5*10**(fitmodel.evaluate(paramdict_plot[imodel], 
@@ -338,8 +343,7 @@ def PlotCorner(FortesFit_OutFile, BurnIn = 0, old=False):
 
 # ***********************************************************************************************
 
-def	PlotModelSEDs(FortesFit_OutFile, BurnIn = 0, old=False, scaled_models=None, filter_scaling=None, wave_range = [1e-1,1e3], 
-	PDF_File='', Nsamps=100, silent=False, legend=True):
+def	PlotModelSEDs(FortesFit_OutFile, BurnIn = 0, old=False, wave_range = [1e-1,1e3], Nsamps=100, silent=False, legend=True):
 	""" Plot the best-fit combined SED, model photometry. 
 		From Nsamps SEDs drawn from the joint posterior, get the error SEDs for each component and overplot.
 		
@@ -351,18 +355,6 @@ def	PlotModelSEDs(FortesFit_OutFile, BurnIn = 0, old=False, scaled_models=None, 
 		silent: If True, no information messages are used. Serial plots are shown for 2 seconds.
 	
 	"""		
-
-	if scaled_models is None:
-		scaled_models = []
-
-	if filter_scaling is None:
-		filter_scaling = {}
-	
-	# Initialise PDF output if necessary
-	if len(PDF_File) > 0:
-		if(not silent):
-			print('Summary plots will be sent to '+PDF_File)
-		output = PdfPages(PDF_File)
 		
 	# Initialise the wavelength flux array that is used for plotting the best-fit model (from 1000 Ang to 1mm) in microns
 	ObsWave = np.log10(wave_range[0]) + np.arange(101)*(np.log10(wave_range[1]/wave_range[0])/100.0)
@@ -417,30 +409,37 @@ def	PlotModelSEDs(FortesFit_OutFile, BurnIn = 0, old=False, scaled_models=None, 
 			Redshift = paramdict_varying['Redshift']
 		else:
 			Redshift = fitresult.redshift
+
+		# iterate over each model
 		for imodel,modelid in enumerate(ModelIDs):
 			model = Models[imodel]
 			for param in paramdict_plot[imodel].keys():
 				uparam = '{0:2d}_'.format(model.modelid)+param
 				if uparam in paramdict_varying:
 					paramdict_plot[imodel][param] = paramdict_varying[uparam]
+
 			sed = model.get_pivot_sed(paramdict_plot[imodel],Redshift)
 			index, = np.where(sed['observed_flux'] > 0.0) # Only interpolate over valid parts of the model SED
 			tempflux = np.interp(ObsWave,np.log10(sed['observed_wavelength'][index]),np.log10(sed['observed_flux'][index]),\
 								 left=-np.inf,right=-np.inf) + ObsWave	
 			sample_seds[isamp,:,imodel] = 10**(tempflux)
 
-			if modelid in scaled_models:
-				fitmodel = FitModel(modelid,Redshift,FilterIDs,filter_scaling=filter_scaling)
-			else:
-				fitmodel = FitModel(modelid,Redshift,FilterIDs,filter_scaling=None)
-
+			# model photometry
+			fitmodel = FitModel(modelid,Redshift,FilterIDs)
 			tmp_model_photometry = []
-			for ifilt in range(len(FilterIDs)):
-				tmp_photometry = 3.63e-5*10**(fitmodel.evaluate(paramdict_plot[imodel],Redshift,FilterIDs[ifilt]))*FilterWave[ifilt]
+			for ifilt, cur_filterid in enumerate(FilterIDs):
+				filt_photometry = 3.63e-5*10**(fitmodel.evaluate(paramdict_plot[imodel],Redshift,cur_filterid))*FilterWave[ifilt]
+
+				if modelid in fitresult.scaling:
+					if cur_filterid in fitresult.scaling[modelid]:
+						# if this filter is scaled for this model, apply scaling to the flux
+						filt_photometry = filt_photometry * paramdict_varying['scaling_constant'] / fitresult.ap_scaling[cur_filterid]
+
+				# TODO: figure out why filt_photometry is sometimes array vs float
 				try:
-					tmp_model_photometry.append(tmp_photometry[0])
-				except:
-					tmp_model_photometry.append(tmp_photometry)
+					tmp_model_photometry.append(filt_photometry[0])
+				except IndexError:
+					tmp_model_photometry.append(filt_photometry)
 
 			tmp_model_photometry = np.array(tmp_model_photometry)
 			sample_photometry[isamp] += tmp_model_photometry
@@ -502,10 +501,6 @@ def	PlotModelSEDs(FortesFit_OutFile, BurnIn = 0, old=False, scaled_models=None, 
 
 	if legend:
 		ax1.legend()
-
-	if len(PDF_File) > 0:
-		output.savefig(sedfig)
-		output.close()
 	
 	plt.show()
 

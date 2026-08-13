@@ -362,7 +362,7 @@ class CollectModel:
 		FortesFit.
 	"""
 	
-	def __init__(self,modellist,priordists,datacollection,scaling_dict=None):
+	def __init__(self,modellist,priordists,datacollection,scaling_dict=None,ap_scaling=None):
 		""" Initialise the FortesFit model representation for a user-provided object
 			
 			modellist: list-like, the FortesFit ids of models in arbitrary order
@@ -381,7 +381,6 @@ class CollectModel:
 						information about the filters, redshifts and photometry to be fit.
 										
 		"""
-		# TODO: Remove scaled_models and filter_scaling for self.scaling = {modelID: filter_list}
 
 		if scaling_dict is None:
 			scaling_dict = {}
@@ -569,6 +568,7 @@ class CollectModel:
 		# TODO: ModelCollection.priors is used in examine_priors. add scaling there somehow
 		self.priors = PriorDists
 		self.scaling = scaling_dict
+		self.ap_scaling = ap_scaling
 
 		# Compile a list of parameter references, including redshift. 
 		# This order will be used for all further calls to likelihood, prior and sampling functions.
@@ -665,6 +665,10 @@ def prepare_output_file(datacollection,modelcollection,fitengine,OutputPath=None
 	scaling_group = FitFile.create_group("scaling")
 	for scaled_mid, scaled_filt_l in modelcollection.scaling.items():
 		scaling_group[str(scaled_mid)] = np.array(scaled_filt_l)
+
+	ap_group = FitFile.create_group("ap_scaling")
+	for filt_id, ap_corr in modelcollection.ap_scaling.items():
+		ap_group[str(filt_id)] = ap_corr
 
 	# Store the photometry in a group within the file
 	photometry = FitFile.create_group("Photometry")

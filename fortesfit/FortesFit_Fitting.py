@@ -125,14 +125,15 @@ def	Bayesian_probability(varying_parameters,datacollection,modelcollection,varyi
 	# Calculate the likelihood
 	loglikelihood = Sawicki12_loglikelihood(redshift,\
 							  datacollection.filters,datacollection.fluxes,datacollection.flux_errors,datacollection.error_weights,\
-							  modelcollection.models,paramdict_list,modelcollection.scaling,scaling_c_val)
+							  modelcollection.models,paramdict_list,modelcollection.scaling,scaling_constant=scaling_c_val,
+							  aperture_scaling=modelcollection.ap_scaling)
 	
 	# Return the total log probability (likelihood*prior)
 	return loglikelihood + logprior	
 
 # ***********************************************************************************************
 
-def	Sawicki12_loglikelihood(redshift,filters,fluxes,flux_errors,error_weights,models,parameters,model_scaling,scaling_constant):
+def	Sawicki12_loglikelihood(redshift,filters,fluxes,flux_errors,error_weights,models,parameters,model_scaling,scaling_constant,aperture_scaling):
 	"""	Obtains the likelihood of a given set of fluxes, as outlined in Sawicki 2012.
 
 		redshift: redshift of the object
@@ -150,11 +151,14 @@ def	Sawicki12_loglikelihood(redshift,filters,fluxes,flux_errors,error_weights,mo
 	modelFluxes = np.zeros(len(filters),dtype='f4')
 	for imodel,model in enumerate(models):
 		for i,filter in enumerate(filters):
-			modelFluxes[i] += 3.63e-5*10**(model.evaluate(parameters[imodel],redshift,filter.filterid))	# Include scaling from STMAG=0
+			current_flux = 3.63e-5*10**(model.evaluate(parameters[imodel],redshift,filter.filterid))	# Include scaling from STMAG=0
 			if model.modelid in model_scaling:
 				if filter.filterid in model_scaling[model.modelid]:
 					# apply scaling to this filter in this model
-					modelFluxes[i] *= scaling_constant
+					modelFluxes[i] = modelFluxes[i] + (current_flux * scaling_constant / aperture_scaling[filter.filterid])
+					# print(f"{filter.filterid}: {scaling_constant}, {scaling_constant / aperture_scaling[filter.filterid]}")
+				else:
+					modelFluxes[i] = modelFluxes[i] + current_flux
 	
 	loglike_det = 0.0
 	index, = np.where(flux_errors > 0.0) # Detections, supplied errors are positive
